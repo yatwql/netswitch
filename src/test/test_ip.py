@@ -34,3 +34,26 @@ def test_admin_up():
     assert ip.admin_up({"flags": ["NO-CARRIER", "UP"]}) is True
     assert ip.admin_up({"flags": ["BROADCAST", "MULTICAST"]}) is False
     assert ip.admin_up({}) is False
+
+
+def test_parse_ssid():
+    out = "Connected to aa:bb:cc:dd:ee:ff (on wlp129s0)\n\tSSID: MyWiFi\n\tfreq: 2412\n"
+    assert ip.parse_ssid(out) == "MyWiFi"
+    assert ip.parse_ssid("Not connected.") is None
+    assert ip.parse_ssid("\tSSID: \n") is None
+
+
+def test_wireless_ssid_via_iw(monkeypatch):
+    monkeypatch.setattr(ip.shutil, "which",
+                        lambda n: "/usr/bin/iw" if n == "iw" else None)
+
+    class _P:
+        stdout = "SSID: HomeNet\n"
+
+    monkeypatch.setattr(ip.ex, "run", lambda *a, **k: _P())
+    assert ip.wireless_ssid("wlan0") == "HomeNet"
+
+
+def test_wireless_ssid_no_tools(monkeypatch):
+    monkeypatch.setattr(ip.shutil, "which", lambda n: None)
+    assert ip.wireless_ssid("wlan0") is None

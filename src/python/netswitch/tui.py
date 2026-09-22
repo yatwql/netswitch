@@ -42,6 +42,7 @@ class _App:
         self.ifaces = []
         self.primary: Optional[str] = None
         self.applied: Dict[str, bool] = {}
+        self.active_egress: set = set()   # 已被应用规则的出口网卡（黄色）
         self.sel: Optional[Tuple[str, str]] = None   # ("iface"|"rule", name)
         self.msg = ""
         self.last_refresh = ""
@@ -54,6 +55,7 @@ class _App:
             curses.init_pair(1, curses.COLOR_GREEN, -1)    # 主网卡
             curses.init_pair(2, curses.COLOR_BLUE, -1)     # 其他网卡
             curses.init_pair(3, curses.COLOR_RED, -1)      # 被禁止 / 不可用
+            curses.init_pair(4, curses.COLOR_YELLOW, -1)   # 分流生效网卡
             self.has_color = True
         except Exception:  # noqa: BLE001
             pass
@@ -71,6 +73,18 @@ class _App:
             self.stdscr.addstr(y, x, text, attr)
         except curses.error:
             pass
+
+    def _add_row(self, y: int, segments) -> None:
+        """按段落顺序写一整行（每段可不同颜色），宽字符由 curses 自动推进。"""
+        try:
+            self.stdscr.move(y, 0)
+        except curses.error:
+            return
+        for text, attr in segments:
+            try:
+                self.stdscr.addstr(text, attr)
+            except curses.error:
+                return
 
     def _prompt(self, msg: str) -> Optional[str]:
         """底部输入行（逐字符读取，便于拦截 Ctrl+C / Esc）。
@@ -185,6 +199,10 @@ class _App:
                 self.applied[r.name] = routing.rule_applied(r)
             except Exception:  # noqa: BLE001
                 self.applied[r.name] = False
+        self.active_egress = {
+            r.interface for r in self.config.rules
+            if r.interface and self.applied.get(r.name)
+        }
         self.last_refresh = time.strftime("%H:%M:%S")
 
     # ---------- 绘制 ----------
@@ -211,11 +229,14 @@ class _App:
             else:
                 state = "未有连接"
             metric = i.metric if i.metric is not None else "-"
+            ssid = f"  SSID={i.ssid or '-'}" if i.type == "wireless" else ""
             tag = "[主网卡]" if i.name == self.primary else ""
             line = (f"  [{idx}] {i.name:<12} {kind}  {state}  "
-                    f"IP={i.ip or '-'}  metric={metric}  网关={i.gateway or '-'}  {tag}")
-            # 颜色：主网卡绿 / 其他网卡蓝 / 被禁止(admin down)或不可用红
-            if not i.admin_up or i.state == "no-carrier":
+                    f"IP={i.ip or '-'}  metric={metric}  网关={i.gateway or '-'}{ssid}  {tag}")
+            # 颜色：分流生效网卡黄 / 被禁止或不可用红 / 主网卡绿 / 其他网卡蓝
+            if i.name in self.active_egress:
+                attr = self._cp(4)
+            elif not i.admin_up or i.state == "no-carrier":
                 attr = self._cp(3)
             elif i.name == self.primary:
                 attr = self._cp(1)
@@ -233,14 +254,21 @@ class _App:
             self._add(y, 0, "  （无规则；在 data/config/config.json 的 rules 中添加）")
             y += 1
         for r in self.config.rules:
+            sel = self.sel == ("rule", r.name)
+            base = curses.A_REVERSE if sel else 0
+            is_applied = bool(self.applied.get(r.name))
             if r.interface:
                 eff = f"生效网卡: {r.interface}"
+                eff_attr = (self._cp(4) if is_applied else 0) | base
             else:
                 eff = "生效网卡: 未分流"
-            applied = "已应用" if self.applied.get(r.name) else "未应用"
-            line = f"  {r.name:<12} {eff}  [{applied}]"
-            attr = curses.A_REVERSE if self.sel == ("rule", r.name) else 0
-            self._add(y, 0, line, attr)
+                eff_attr = base
+            applied = "已应用" if is_applied else "未应用"
+            self._add_row(y, [
+                (f"  {r.name:<12} ", base),
+                (eff, eff_attr),
+                (f"  [{applied}]", base),
+            ])
             y += 1
 
         y += 1

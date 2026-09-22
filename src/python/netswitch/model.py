@@ -16,6 +16,7 @@ class Interface:
     gateway: Optional[str] = None
     metric: Optional[int] = None
     admin_up: bool = False         # 管理状态（IFF_UP）
+    ssid: Optional[str] = None     # 无线网卡当前 SSID
 
 
 @dataclass

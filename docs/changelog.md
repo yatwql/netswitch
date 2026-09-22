@@ -46,6 +46,8 @@
 - README 精简：移除与 folder.md / faq.md 重复的「目录结构」「常见问题速查」两节，改为在文档索引与指引中引用。
 - 用户手册梳理：以用户视角整体重组（能做什么 / 快速上手 / 配置 / 命令与按键速查 / 场景 / 日志与排查 / FAQ / 安全）；「日志」说明由 README 移入 user-manuals.md，README 再精简为 7 节。
 - .gitignore：忽略整个 `logs/` 目录（运行日志，程序运行时自动创建），移除 `logs/.gitkeep`。
+- TUI 配色：分流规则生效时，其出口网卡在规则行「生效网卡」与物理网卡列表均显示为**黄色**（新增黄色配色对）。
+- 无线网卡 SSID：探测并展示无线网卡的当前 SSID（`iw dev <if> link`，回退 `iwgetid -r`），在 TUI 网卡行与 `status` 中显示；未连接显示 `-`。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。

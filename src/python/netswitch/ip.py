@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from typing import Any, Dict, List, Optional
 
 from . import exec as ex
@@ -68,6 +69,31 @@ def interface_type(name: str) -> str:
     if os.path.isdir(f"/sys/class/net/{name}/wireless"):
         return "wireless"
     return "wired"
+
+
+def parse_ssid(iw_link_output: str) -> Optional[str]:
+    """从 `iw dev <if> link` 输出解析 SSID（未连接返回 None）。"""
+    for line in (iw_link_output or "").splitlines():
+        s = line.strip()
+        if s.startswith("SSID:"):
+            return s.split(":", 1)[1].strip() or None
+    return None
+
+
+def wireless_ssid(name: str) -> Optional[str]:
+    """无线网卡当前 SSID；未连接或工具缺失时返回 None。
+
+    优先 `iw dev <if> link`，回退 `iwgetid -r <if>`；两者都无则不报错。
+    """
+    if shutil.which("iw"):
+        out = ex.run(["iw", "dev", name, "link"], check=False, readonly=True).stdout
+        ssid = parse_ssid(out)
+        if ssid:
+            return ssid
+    if shutil.which("iwgetid"):
+        out = ex.run(["iwgetid", "-r", name], check=False, readonly=True).stdout
+        return (out or "").strip() or None
+    return None
 
 
 def link_state(name: str, link: Dict[str, Any]) -> str:

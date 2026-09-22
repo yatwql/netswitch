@@ -41,15 +41,17 @@ def detect_interfaces() -> List[Interface]:
         if not ip.is_physical(name, link):
             continue
         gw, metric = defaults.get(name, (None, None))
+        itype = ip.interface_type(name)
         result.append(
             Interface(
                 name=name,
-                type=ip.interface_type(name),
+                type=itype,
                 ip=ips.get(name),
                 state=ip.link_state(name, link),
                 gateway=gw,
                 metric=metric,
                 admin_up=ip.admin_up(link),
+                ssid=ip.wireless_ssid(name) if itype == "wireless" else None,
             )
         )
     return result

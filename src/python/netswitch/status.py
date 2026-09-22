@@ -21,10 +21,11 @@ def print_status(config: Config) -> None:
 
     print("== 物理网卡 ==")
     for i in interfaces:
+        ssid = f" SSID={i.ssid or '-'}" if i.type == "wireless" else ""
         print(f"  {i.name:<12} {('无线' if i.type == 'wireless' else '有线'):<4} "
               f"状态={state_label(i.state):<5} IP={i.ip or '-':<18} "
               f"metric={i.metric if i.metric is not None else '-'} "
-              f"网关={i.gateway or '-'}")
+              f"网关={i.gateway or '-'}{ssid}")
 
     print("\n== 默认路由 ==")
     for r in ip.route_list():
