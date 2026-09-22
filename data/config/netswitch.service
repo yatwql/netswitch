@@ -1,0 +1,14 @@
+# netswitch systemd 服务单元模板（安装时由 install-systemd 读取并替换 __REPO_ROOT__）
+[Unit]
+Description=netswitch: apply network switch config
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PYTHONPATH=__REPO_ROOT__/src/python
+ExecStart=/usr/bin/python3 -m netswitch.cli apply --yes --config __REPO_ROOT__/data/config/config.yaml
+
+[Install]
+WantedBy=multi-user.target
