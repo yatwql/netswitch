@@ -154,7 +154,7 @@ cp data/config/config.example.json data/config/config.json
 
 | 子命令 | 作用 |
 |--------|------|
-| `status` | 查看状态（网卡/IP/状态/metric/规则） |
+| `status` | 查看状态（主机名、网卡/IP/状态/metric/规则） |
 | `detect [--write]` | 重新探测网卡；`--write` 写回 `interfaces` |
 | `iface up\|down <name> [--force]` | 开启 / 关闭网卡 |
 | `metric set <name> <n>` | 设置 metric（越小越优先） |
@@ -167,7 +167,7 @@ cp data/config/config.example.json data/config/config.json
 
 ### 4.2 TUI 按键
 
-启动：`scripts/tui-netswitch.sh`
+启动：`scripts/tui-netswitch.sh`（标题栏显示当前主机名）
 
 | 按键 | 作用 |
 |------|------|

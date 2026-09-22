@@ -48,6 +48,8 @@
 - .gitignore：忽略整个 `logs/` 目录（运行日志，程序运行时自动创建），移除 `logs/.gitkeep`。
 - TUI 配色：分流规则生效时，其出口网卡在规则行「生效网卡」与物理网卡列表均显示为**黄色**（新增黄色配色对）。
 - 无线网卡 SSID：探测并展示无线网卡的当前 SSID（`iw dev <if> link`，回退 `iwgetid -r`），在 TUI 网卡行与 `status` 中显示；未连接显示 `-`。
+- TUI 标题栏：显示当前主机名（`netswitch · <主机名> · 网卡切换控制台`）。
+- `status` 输出：首行显示当前主机名。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。

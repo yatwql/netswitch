@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import curses
+import socket
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -43,6 +44,7 @@ class _App:
         self.primary: Optional[str] = None
         self.applied: Dict[str, bool] = {}
         self.active_egress: set = set()   # 已被应用规则的出口网卡（黄色）
+        self.hostname = socket.gethostname()
         self.sel: Optional[Tuple[str, str]] = None   # ("iface"|"rule", name)
         self.msg = ""
         self.last_refresh = ""
@@ -209,7 +211,8 @@ class _App:
     def draw(self) -> None:
         self.stdscr.erase()
         h, _ = self.stdscr.getmaxyx()
-        self._add(0, 0, "netswitch · 网卡切换控制台（q/Ctrl+C 退出，f/F5 刷新）",
+        self._add(0, 0,
+                  f"netswitch · {self.hostname} · 网卡切换控制台（q/Ctrl+C 退出，f/F5 刷新）",
                   curses.A_BOLD)
 
         y = 2

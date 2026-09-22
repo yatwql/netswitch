@@ -1,6 +1,8 @@
 """状态汇总与展示（FR6）。"""
 from __future__ import annotations
 
+import socket
+
 from . import detect, ip, routing
 from .model import Config
 
@@ -19,6 +21,7 @@ def print_status(config: Config) -> None:
     interfaces = detect.detect_interfaces()
     backend = routing.resolve_backend(config.routing.backend)
 
+    print(f"主机: {socket.gethostname()}")
     print("== 物理网卡 ==")
     for i in interfaces:
         ssid = f" SSID={i.ssid or '-'}" if i.type == "wireless" else ""
