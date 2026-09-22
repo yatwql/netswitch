@@ -205,15 +205,17 @@ class _App:
             r.interface for r in self.config.rules
             if r.interface and self.applied.get(r.name)
         }
-        self.last_refresh = time.strftime("%H:%M:%S")
+        self.last_refresh = time.strftime("%Y%m%d %H:%M:%S")
 
     # ---------- 绘制 ----------
     def draw(self) -> None:
         self.stdscr.erase()
         h, _ = self.stdscr.getmaxyx()
-        self._add(0, 0,
-                  f"netswitch · {self.hostname} · 网卡切换控制台（q/Ctrl+C 退出，f/F5 刷新）",
-                  curses.A_BOLD)
+        self._add_row(0, [
+            ("netswitch · ", curses.A_BOLD),
+            (self.hostname, self._cp(2) | curses.A_BOLD),   # 主机名：蓝色
+            (" · 网卡切换控制台（q/Ctrl+C 退出，f/F5 刷新）", curses.A_BOLD),
+        ])
 
         y = 2
         self._add(y, 0, "── 物理网卡（↑/↓ 导航，数字 1..N 选中；o 开关 / m 主网卡 / t metric）──")

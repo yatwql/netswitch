@@ -50,6 +50,7 @@
 - 无线网卡 SSID：探测并展示无线网卡的当前 SSID（`iw dev <if> link`，回退 `iwgetid -r`），在 TUI 网卡行与 `status` 中显示；未连接显示 `-`。
 - TUI 标题栏：显示当前主机名（`netswitch · <主机名> · 网卡切换控制台`）。
 - `status` 输出：首行显示当前主机名。
+- 主机名配色与刷新时间：TUI 标题栏主机名显示为**蓝色**；状态栏「最后刷新」时间改为 `yyyyMMdd HH:mm:ss`（含日期）。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。
