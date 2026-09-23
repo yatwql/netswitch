@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
+
+from . import version
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_LOG_DIR = Path(os.environ.get("NETSWITCH_LOG_DIR") or (REPO_ROOT / "logs"))
@@ -45,6 +48,9 @@ def setup(log_dir: Optional[str] = None, level: Optional[int] = None) -> logging
     logger.setLevel(level if level is not None else _default_level())
     logger.propagate = False
     _configured = True
+    logger.info("netswitch %s · host=%s · 程序更新 %s",
+                version.__version__, socket.gethostname(),
+                version.program_mtime_str())
     return logger
 
 

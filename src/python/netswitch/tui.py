@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 from . import apply as apply_mod
 from . import config as config_mod
-from . import detect, iface, log, routing
+from . import detect, iface, log, routing, version
 from .model import Config, RuleCfg
 
 STATE_LABEL = {"connected": "已连接", "no-carrier": "未插网线", "down": "未有连接"}
@@ -45,6 +45,8 @@ class _App:
         self.applied: Dict[str, bool] = {}
         self.active_egress: set = set()   # 已被应用规则的出口网卡（黄色）
         self.hostname = socket.gethostname()
+        self.version_line = (f"版本 v{version.__version__} · "
+                             f"程序更新 {version.program_mtime_str()}")
         self.sel: Optional[Tuple[str, str]] = None   # ("iface"|"rule", name)
         self.msg = ""
         self.last_refresh = ""
@@ -216,6 +218,7 @@ class _App:
             (self.hostname, self._cp(2) | curses.A_BOLD),   # 主机名：蓝色
             (" · 网卡切换控制台（q/Ctrl+C 退出，f/F5 刷新）", curses.A_BOLD),
         ])
+        self._add(1, 0, self.version_line, curses.A_DIM)
 
         y = 2
         self._add(y, 0, "── 物理网卡（↑/↓ 导航，数字 1..N 选中；o 开关 / m 主网卡 / t metric）──")

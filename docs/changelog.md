@@ -51,6 +51,7 @@
 - TUI 标题栏：显示当前主机名（`netswitch · <主机名> · 网卡切换控制台`）。
 - `status` 输出：首行显示当前主机名。
 - 主机名配色与刷新时间：TUI 标题栏主机名显示为**蓝色**；状态栏「最后刷新」时间改为 `yyyyMMdd HH:mm:ss`（含日期）。
+- 版本信息统一：新增 `src/python/netswitch/version.py`（版本号 `0.1-dev`，唯一来源）；TUI（标题下方）、`status`、日志均显示**版本号**与**程序更新时间**（本地时区 `yyyyMMdd HH:mm:ss +ZZZZ`）。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。
@@ -58,10 +59,13 @@
 - 分流规则通用化：脚本名/模块名/配置键不硬编码 `github`，改为通用 `rules` 列表（初始默认规则名为 github）；模块 `github.py` 改为 `cidrs.py`。
 - 强化容器覆盖为强制要求：分流必须同时覆盖主机与容器（网络命名空间）对外流量。
 - 设计复盘（第 2 轮，总体设计/可配置化）：配置收敛为声明式（去除 apply.manage_* / systemd / match.ip_version 等冗余项）；`routing.backend` 全局化；`metric primary` 用 `metrics.preferred/fallback` 精确定义；修正 fwmark/table_id 默认值冲突、nft 整表原子替换幂等、文档冗余、目录不一致、preflight 硬编码回退。
+- 版本与分支：版本号唯一来源改为 `src/python/netswitch/version.py`（当前 `0.1-dev`）；新增 `dev` 分支，日常开发在 `dev`，仅在发布正式版本时才合并到 `master`。
 
 ### Fixed
 - `install.sh`：修复无 `sudo` 环境报 `sudo: command not found`——自动检测 root/sudo；依赖优先用户级 `pip install --user`，无提权能力时优雅跳过 systemd。
 
 ## 版本约定
 
-- 首个可发布版本目标为 `0.1.0`：具备 F1–F9 全部功能并通过验收清单。
+- 版本号唯一来源：`src/python/netswitch/version.py` 的 `__version__`。
+- 当前开发版本：`0.1-dev`（在 `dev` 分支开发）。
+- 首个正式版本目标：`0.1.0`（具备 F1–F9 全部功能并通过验收清单）；**发布时由 `dev` 合并到 `master`**。

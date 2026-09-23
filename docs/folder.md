@@ -42,7 +42,8 @@ switch/
 
 | 文件 | 简介 |
 |------|------|
-| `__init__.py` | 包标识，定义版本号 `__version__` |
+| `__init__.py` | 包标识，导入 `__version__` |
+| `version.py` | 版本号与构建信息（唯一来源）：`__version__`、程序更新时间 |
 | `exec.py` | 命令执行封装：root 检查、dry-run、`ExecError` 统一错误 |
 | `log.py` | 运行日志：写入 `logs/netswitch.log`（按大小轮转） |
 | `model.py` | 数据模型：`Interface`/`IfaceCfg`/`RuleCfg`/`CidrsCfg`/`Config` 等 dataclass |
@@ -70,6 +71,7 @@ switch/
 | `test_routing.py` | 后端解析、nft 脚本生成、规则筛选、规则是否已应用 |
 | `test_apply.py` | 默认路由快照与 state.json 读写 |
 | `test_tui.py` | 字母键大小写归一化 |
+| `test_version.py` | 版本号与程序更新时间格式 |
 | `test_log.py` | 日志写入与命令记录 |
 | `test_cli.py` | 命令行参数解析 |
 

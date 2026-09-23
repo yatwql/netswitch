@@ -24,6 +24,12 @@
 | 脚本 | `scripts/` |
 | 文档 | `docs/` |
 
+## 版本与分支
+
+- 版本号唯一来源：`src/python/netswitch/version.py` 的 `__version__`（当前 `0.1-dev`）。
+- 分支策略：日常开发在 **`dev`** 分支进行；仅在**发布正式版本**时才将 `dev` 合并到 `master`。
+- 文档中的版本号须与 `version.py` 保持一致；程序（TUI/status/日志）会显示版本号与程序更新时间。
+
 ## 常用命令
 
 - 测试：`scripts/run-test.sh`（或 `make test`）

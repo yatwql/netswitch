@@ -47,7 +47,8 @@ switch/
 ├── src/
 │   ├── python/                        # Python 源码
 │   │   └── netswitch/
-│   │       ├── __init__.py        # 版本号
+│   │       ├── __init__.py        # 包标识（导入 __version__）
+│   │       ├── version.py         # 版本号与构建信息（唯一来源）
 │   │       ├── exec.py            # 命令执行封装：root 检查 / dry-run / 日志
 │   │       ├── log.py             # 运行日志（logs/netswitch.log，轮转）
 │   │       ├── model.py           # dataclass：Interface / Route / Rule / NetState
@@ -70,6 +71,7 @@ switch/
 │       ├── test_routing.py
 │       ├── test_apply.py
 │       ├── test_tui.py
+│       ├── test_version.py
 │       ├── test_cli.py
 │       └── test_log.py
 ├── scripts/                           # shell 便捷入口，调用 src/python 的程序
