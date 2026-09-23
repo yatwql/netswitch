@@ -37,7 +37,7 @@ def print_status(config: Config) -> None:
             print(f"  default via {r.get('gateway')} dev {r.get('dev')} "
                   f"metric {r.get('metric')}")
 
-    print(f"\n== 分流规则（后端: {backend}）==")
+    print(f"\n== 分流规则（后端: {routing.backend_note(backend)}）==")
     if not config.rules:
         print("  （无）")
     for r in config.rules:

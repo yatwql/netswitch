@@ -60,6 +60,7 @@
 - TUI 状态栏：刷新时间增加时区（`yyyyMMdd HH:mm:ss +ZZZZ`），与标题栏版本/程序更新时间格式一致。
 - 缺省分流规则：`config.example.json` 自带一条 `github` 规则（出口网卡留空）；新增 `cli-netswitch.sh seed-defaults`（`rules` 为空时写入）与 `config.seed_default_rules()`；`install.sh` 自动调用，新装机不再“无规则”。
 - 策略路由能力诊断：`preflight.sh` 新增「策略路由能力」项（探测自定义路由表 + `ip rule`）；`routing._run_or_hint()` 在 `RTNETLINK: Operation not supported` 时给出明确原因与提示（内核 `CONFIG_IP_MULTIPLE_TABLES` / 受限容器）；`faq.md` / `technical.md` 同步说明。
+- 新增 **mainroute 后端**（回退方案）：不支持策略路由时，在主路由表按目标网段加明细路由分流（不需多路由表/`ip rule`）；`backend: auto` 自动回退；`preflight.sh` 同时检测主表路由能力；`status` 显示后端说明。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。

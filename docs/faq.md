@@ -77,8 +77,9 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 
 **Q23：设置分流规则时报 `RTNETLINK answers: Operation not supported`？**
 说明**本机内核/命名空间不支持策略路由（多路由表）**。常见原因：内核未启用 `CONFIG_IP_MULTIPLE_TABLES`（常见于精简/嵌入式内核），或运行在受限容器 / gVisor 中（容器内无法改路由规则）。
-- 用 `scripts/preflight.sh` →「策略路由能力」确认（会尝试添加一个临时路由表条目与 `ip rule`）。
-- 该环境**无法做流量分流**；如只是想让某张网卡承载**全部**流量，可改用「设为主网卡」（`m` / `metric primary`），这不依赖策略路由。
+- 用 `scripts/preflight.sh` →「策略路由能力」确认（会尝试添加一个临时路由表条目）。
+- 程序会**自动回退 `mainroute` 后端**：在主路由表按目标网段加明细路由（`ip route replace <cidr> via <网关> dev <网卡>`），不需多路由表与 `ip rule`。
+- 若 `preflight.sh` 里「主表路由」也失败（受限容器/gVisor），则确实无法分流；此时若只想让某张网卡承载**全部**流量，可改用「设为主网卡」（`m` / `metric primary`）。
 
 **Q16：怎么确认分流是否生效？**
 `scripts/cli-netswitch.sh status`；或在容器内访问规则目标站点，看去程公网 IP 是否为指定网卡。TUI 规则区会显示「生效网卡」与「已应用/未应用」。

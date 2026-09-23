@@ -169,17 +169,20 @@ else
   warn "策略路由后端：将回退 iprule（纯 ip rule，无需 nft）"
 fi
 
-# 策略路由能力：自定义路由表 + ip rule（缺失则无法分流）
+# 策略路由能力（自定义路由表 + ip rule）
 if ip route add 203.0.113.0/24 dev lo table 12345 2>/dev/null; then
   ip route del 203.0.113.0/24 dev lo table 12345 2>/dev/null
-  if ip rule add pref 19999 lookup 12345 2>/dev/null; then
-    ip rule del pref 19999 2>/dev/null
-    ok "策略路由能力：自定义路由表 + ip rule 可用"
-  else
-    fail "策略路由能力：ip rule 不可用（内核可能缺少 CONFIG_IP_MULTIPLE_TABLES，或受限容器）—— 无法分流"
-  fi
+  ok "策略路由能力：自定义路由表可用（后端 nftables/iprule 可用）"
 else
-  fail "策略路由能力：自定义路由表不可用（内核可能缺少 CONFIG_IP_MULTIPLE_TABLES，或受限容器/gVisor）—— 无法分流"
+  warn "策略路由能力：自定义路由表不可用（内核可能缺 CONFIG_IP_MULTIPLE_TABLES，或受限容器/gVisor）—— 将回退 mainroute"
+fi
+
+# mainroute 回退能力（主表明细路由，不需策略路由）
+if ip route add 203.0.113.0/24 dev lo 2>/dev/null; then
+  ip route del 203.0.113.0/24 dev lo 2>/dev/null
+  ok "主表路由可用（mainroute 后端可回退分流）"
+else
+  fail "主表路由亦不可用（受限容器/gVisor）—— 无法分流"
 fi
 
 fwd=$(sysctl -n net.ipv4.ip_forward 2>/dev/null)

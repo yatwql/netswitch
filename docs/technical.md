@@ -149,7 +149,7 @@ switch/
 | `interface.metric` | 无 | 不填则 apply 不调整该网卡 |
 | `metrics.preferred` | 100 | `metric primary` 给优先网卡 |
 | `metrics.fallback` | 600 | `metric primary` 给其余网卡 |
-| `routing.backend` | auto | 有 `nft` 用 nftables，否则 iprule |
+| `routing.backend` | auto | `auto` → 不支持策略路由用 `mainroute`；否则有 `nft` 用 nftables，否则 iprule |
 | `routing.nft_table` | netswitch | nft 表名 |
 | `rule.enabled` | true | |
 | `rule.interface` | 无（必填） | 空 = 该规则不生效 |
@@ -262,6 +262,20 @@ done
 说明：
 - `to <cidr>` 目标匹配同时覆盖本机流量与转发（容器）流量，无需额外打标。
 - 缺点：CIDR 多时产生较多 `ip rule`；nftables 后端每条规则只需 1 条标记规则。
+
+**后端 C：mainroute（主表明细路由，回退方案）**
+
+在**不支持策略路由**的环境（内核缺 `CONFIG_IP_MULTIPLE_TABLES`、受限容器/gVisor，报 `RTNETLINK answers: Operation not supported`），改用主表按目标网段加明细路由，无需多路由表与 `ip rule`：
+
+```bash
+for cidr in <cidrs...>; do
+  ip route replace "$cidr" via <网关> dev <出口网卡>
+done
+```
+
+- `backend: auto` 时，若探测到策略路由不可用，**自动使用 mainroute**。
+- 清理：逐个 `ip route del <cidr> table main`。
+- 局限：仅按目标网段分流；目标网段多则主表条目较多；不支持按域名等。
 
 **撤销（revert / rule clear）**
 

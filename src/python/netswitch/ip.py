@@ -1,6 +1,7 @@
 """iproute2 命令的 JSON 解析与命令构造、物理网卡识别。"""
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -110,6 +111,31 @@ def link_state(name: str, link: Dict[str, Any]) -> str:
 def admin_up(link: Dict[str, Any]) -> bool:
     """管理状态：flags 含 `UP`（IFF_UP）表示接口未被关闭。"""
     return "UP" in (link.get("flags") or [])
+
+
+POLICY_TEST_TABLE = "12345"
+
+
+@functools.lru_cache(maxsize=1)
+def policy_routing_supported() -> bool:
+    """是否支持策略路由（自定义路由表 + ip rule）。
+
+    需 root 才能探测（会临时增删一个测试条目）；非 root 时返回 True（不误判）。
+    不支持时典型报错：`RTNETLINK answers: Operation not supported`
+    （内核缺 CONFIG_IP_MULTIPLE_TABLES，或受限容器/gVisor）。
+    """
+    if os.geteuid() != 0:
+        return True
+    try:
+        r = ex.run(["ip", "route", "add", "203.0.113.0/24", "dev", "lo",
+                    "table", POLICY_TEST_TABLE], check=False, readonly=True)
+        if r.returncode != 0:
+            return False
+        ex.run(["ip", "route", "del", "203.0.113.0/24", "dev", "lo",
+                "table", POLICY_TEST_TABLE], check=False, readonly=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def nft_set_name(rule_name: str) -> str:

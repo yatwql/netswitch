@@ -131,7 +131,7 @@ cp data/config/config.example.json data/config/config.json
 | `interfaces[].gateway` | 网关；缺省自动探测 |
 | `interfaces[].metric` | 希望设定的 metric；缺省不调整 |
 | `metrics.preferred` / `fallback` | `metric primary` 用：主网卡 / 其余网卡的值（默认 100 / 600） |
-| `routing.backend` | 策略路由后端：`auto` / `nftables` / `iprule` |
+| `routing.backend` | 分流后端：`auto` / `nftables` / `iprule` / `mainroute`（`auto` 在不支持策略路由时自动回退 `mainroute`） |
 | `routing.nft_table` | nft 表名（默认 `netswitch`） |
 | `rules[].name` | 规则唯一名（任意，如 `github`） |
 | `rules[].enabled` | 是否启用（默认 `true`） |

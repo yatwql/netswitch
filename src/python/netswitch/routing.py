@@ -25,9 +25,11 @@ def _run_or_hint(cmd, *, dry_run: bool = False) -> None:
 
 
 def resolve_backend(pref: str) -> str:
-    if pref in ("nftables", "iprule"):
+    if pref in ("nftables", "iprule", "mainroute"):
         return pref
-    # auto：有 nft 用 nftables，否则 iprule
+    # auto：不支持策略路由 -> mainroute；否则优先 nftables，其次 iprule
+    if not ip.policy_routing_supported():
+        return "mainroute"
     if shutil.which("nft"):
         return "nftables"
     return "iprule"
@@ -114,6 +116,12 @@ def clear_rules(config: Config, *, dry_run: bool = False) -> None:
     _log.info("clear_rules: 清除策略路由产物（dry_run=%s）", dry_run)
     tables = {r.table_id for r in config.rules}
 
+    # mainroute：删除主表中本程序添加的明细路由
+    for r in config.rules:
+        for c in cidrs.fetch_cidrs(r.cidrs):
+            ex.run(["ip", "route", "del", c, "table", "main"],
+                   dry_run=dry_run, check=False)
+
     # nft 整表删除（仅当 nft 可用）
     if shutil.which("nft"):
         ex.run(["nft", "delete", "table", "inet", config.routing.nft_table],
@@ -150,6 +158,16 @@ def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
         active.append(r)
 
         gw, src, subnet = _gw_src(config, r.interface)
+
+        # mainroute 后端：不使用多路由表/ip rule，而是在主表按目标网段加明细路由
+        if backend == "mainroute":
+            for c in rule_cidrs:
+                _run_or_hint(["ip", "route", "replace", c, "via", gw,
+                              "dev", r.interface], dry_run=dry_run)
+            _log.info("mainroute: %s -> %s（%d 个网段）",
+                      r.name, r.interface, len(rule_cidrs))
+            continue
+
         table = r.table_id
         # 独立路由表：默认走该网卡网关；补直连子网保证网关可达
         _run_or_hint(["ip", "route", "add", "default", "via", gw, "dev", r.interface,
@@ -176,3 +194,12 @@ def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
         ex.run(["nft", "-f", "-"], dry_run=dry_run, input=script)
 
     _log.info("apply_rules: 后端=%s 规则=%s", backend, [r.name for r in active])
+
+
+def backend_note(backend: str) -> str:
+    """后端的人话说明（供 status 展示）。"""
+    return {
+        "nftables": "nftables（多路由表 + fwmark）",
+        "iprule": "iprule（多路由表 + ip rule）",
+        "mainroute": "mainroute（主表明细路由，无需策略路由）",
+    }.get(backend, backend)
