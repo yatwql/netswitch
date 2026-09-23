@@ -7,7 +7,7 @@ import subprocess
 import time
 from pathlib import Path
 
-__version__ = "0.1"
+__version__ = "0.2-dev"
 
 _PKG_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _PKG_DIR.parents[2]          # src/python/netswitch -> 仓库根
