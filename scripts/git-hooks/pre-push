@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# pre-push —— 推送前：完整提交门槛（测试 + 文档 + 版本）
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+bash scripts/check.sh

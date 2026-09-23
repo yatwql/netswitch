@@ -12,7 +12,10 @@
    - 目录/文件增删 → 更新 `folder.md`。
    - 设计/配置/需求变化 → 同步 `requirements.md` / `technical.md` / `plan.md`。
    - 发现问题与决策 → 记录到 `review-findings.md`。
-   - 核对索引：`scripts/check.sh`（测试 + 文档一致性）。
+3. **版本一致**：`src/python/netswitch/version.py` 的 `__version__` 与 `README.md` 的「版本：」一致（`scripts/check-version.sh`）。
+4. **分支正确**：日常开发在 `dev`；不得在 `master`/`main` 直接提交（`scripts/check-branch.sh`）。
+
+一键核对：`scripts/check.sh`（测试 + 文档一致性 + 版本一致性）。
 
 ## 目录约定
 
@@ -32,12 +35,27 @@
 - **发布**：运行 `scripts/release.sh`（默认演练，`--yes` 执行）：把 dev 版本转为正式版并归档 changelog → 合并 `dev` 到 `master` 并打 tag `vX.Y` → **自动把 dev 版本递增为 `X.(Y+1)-dev`** 并推送。
 - 文档中的版本号须与 `version.py` 保持一致；程序（TUI/status/日志）会显示版本号与程序更新时间。
 
+## 本地 git 钩子（推荐安装）
+
+```bash
+scripts/install-git-hooks.sh     # 设置 core.hooksPath = scripts/git-hooks
+```
+
+- `pre-commit`：分支策略 + 版本一致性 + 文档核对（快检查）。
+- `pre-push`：完整门槛 `scripts/check.sh`（测试 + 文档 + 版本）。
+- 卸载：`git config --unset core.hooksPath`。
+
+（也可改用 pre-commit 框架：`pip install pre-commit && pre-commit install`，hook 配置见 `.pre-commit-config.yaml`；两种方式二选一。）
+
 ## 常用命令
 
 - 测试：`scripts/run-test.sh`（或 `make test`）
-- 完整核对（测试 + 文档）：`scripts/check.sh`（或 `make check`）
-- 本地预提交钩子：`pip install pre-commit && pre-commit install`
-- 安装：`sudo scripts/install.sh`
+- 完整核对（测试 + 文档 + 版本）：`scripts/check.sh`（或 `make check`）
+- 单独核对：`scripts/check-docs.sh` / `scripts/check-version.sh` / `scripts/check-branch.sh`
+- 安装 git 钩子：`scripts/install-git-hooks.sh`
+- 发布正式版：`scripts/release.sh`（演练） / `scripts/release.sh --yes`（执行）
+- 本地预提交钩子（可选）：`pip install pre-commit && pre-commit install`
+- 安装程序：`sudo scripts/install.sh`
 - 干跑：`scripts/cli-netswitch.sh apply --dry-run`
 
 ## 禁止提交

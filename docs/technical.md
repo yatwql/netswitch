@@ -77,6 +77,10 @@ switch/
 ├── scripts/                           # shell 便捷入口，调用 src/python 的程序
 │   ├── install.sh            # 一次性安装（装依赖/生成配置/预检，可选 --with-systemd）
 │   ├── release.sh            # 发布正式版（dev→master，打 tag，自动递增 dev 版本）
+│   ├── check-version.sh      # 版本一致性核对
+│   ├── check-branch.sh       # 分支策略核对（禁 master 直接提交）
+│   ├── install-git-hooks.sh  # 安装版本化 git 钩子
+│   ├── git-hooks/            # pre-commit / pre-push 钩子
 │   ├── preflight.sh           # 高危操作前预检（只读）
 │   ├── detect.sh              # 重新探测网络并生成配置（调用 CLI detect）
 │   ├── cli-netswitch.sh       # CLI 统一入口：调用 netswitch.cli

@@ -32,11 +32,15 @@ run() { if [ "$CONFIRM" = 1 ]; then "$@"; else echo "[dry-run] $*"; fi; }
 
 ver() { python3 -c "import sys; sys.path.insert(0,'src/python'); from netswitch import version; print($1)"; }
 setver() {
-  python3 - "$VERSION_FILE" "$1" <<'PY'
+  python3 - "$VERSION_FILE" README.md docs/changelog.md "$1" <<'PY'
 import pathlib, re, sys
-p = pathlib.Path(sys.argv[1]); v = sys.argv[2]
-t = p.read_text(encoding="utf-8")
+vf, readme, changelog, v = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+p = pathlib.Path(vf); t = p.read_text(encoding="utf-8")
 p.write_text(re.sub(r'__version__ = "[^"]*"', f'__version__ = "{v}"', t, count=1), encoding="utf-8")
+p = pathlib.Path(readme); t = p.read_text(encoding="utf-8")
+p.write_text(re.sub(r'(^> 版本：)[0-9]+\.[0-9]+(?:-dev)?', rf'\g<1>{v}', t, count=1, flags=re.M), encoding="utf-8")
+p = pathlib.Path(changelog); t = p.read_text(encoding="utf-8")
+p.write_text(re.sub(r'(- 当前开发版本：`)[^`]+(`)', rf'\g<1>{v}\g<2>', t, count=1), encoding="utf-8")
 PY
 }
 

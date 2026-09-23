@@ -6,6 +6,7 @@ cd "$REPO_ROOT"
 
 bash scripts/run-test.sh
 bash scripts/check-docs.sh
+bash scripts/check-version.sh
 
 echo
-echo "[PASS] 提交门槛核对通过：测试全绿 + 文档一致"
+echo "[PASS] 提交门槛核对通过：测试全绿 + 文档一致 + 版本一致"

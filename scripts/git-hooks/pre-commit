@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# pre-commit —— 提交前：分支策略 + 版本一致性 + 文档核对（快检查）
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+bash scripts/check-branch.sh
+bash scripts/check-version.sh
+bash scripts/check-docs.sh

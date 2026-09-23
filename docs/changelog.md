@@ -53,6 +53,7 @@
 - 主机名配色与刷新时间：TUI 标题栏主机名显示为**蓝色**；状态栏「最后刷新」时间改为 `yyyyMMdd HH:mm:ss`（含日期）。
 - 版本信息统一：新增 `src/python/netswitch/version.py`（版本号 `0.1-dev`，唯一来源）；TUI（标题下方）、`status`、日志均显示**版本号**与**程序更新时间**（本地时区 `yyyyMMdd HH:mm:ss +ZZZZ`）。
 - 版本策略与发布脚本：正式版 `X.Y`（无后缀）、开发版 `X.Y-dev`；新增 `scripts/release.sh`（dev→master + 打 tag + **自动递增 dev 版本**）及版本 helper（`release_version` / `next_dev_version`）。
+- 规则落地到脚本与钩子：新增 `scripts/check-version.sh`（版本一致性）、`scripts/check-branch.sh`（分支策略）、`scripts/install-git-hooks.sh` 与 `scripts/git-hooks/{pre-commit,pre-push}`；`scripts/check.sh` 纳入版本一致性；`AGENTS.md` 明确提交门槛、版本/分支规则与钩子安装。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。
@@ -71,4 +72,4 @@
 - 格式：正式版 `<major>.<minor>`（无后缀，如 `0.1`）；开发版 `<major>.<minor>-dev`（如 `0.2-dev`）。
 - 分支：日常开发在 `dev`；发布正式版时才合并到 `master`。
 - 发布流程：`scripts/release.sh --yes` —— 把 dev 版本转为正式版并归档本文件 → 合并 `dev` 到 `master` 并打 tag `vX.Y` → **自动把 dev 版本递增为 `X.(Y+1)-dev`**。
-- 当前开发版本：`0.1-dev`（对应首个正式版 `0.1`）。
+- 当前开发版本：`0.1-dev`（见 `version.py`）。

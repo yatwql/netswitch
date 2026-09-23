@@ -84,7 +84,12 @@ switch/
 | `preflight.sh` | 高危操作前预检（只读，不改变系统状态） |
 | `check-docs.sh` | 文档一致性基础核对（提交门槛） |
 | `run-test.sh` | 运行测试（无需 root） |
-| `check.sh` | 提交前完整核对：测试 + 文档一致性 |
+| `check.sh` | 提交前完整核对：测试 + 文档一致性 + 版本一致性 |
+| `check-version.sh` | 版本一致性核对（`version.py` 与 `README.md` 一致） |
+| `check-branch.sh` | 分支策略核对（禁止在 `master`/`main` 直接提交） |
+| `install-git-hooks.sh` | 安装版本化 git 钩子（`core.hooksPath=scripts/git-hooks`） |
+| `git-hooks/pre-commit` | 提交前钩子：分支策略 + 版本一致性 + 文档核对 |
+| `git-hooks/pre-push` | 推送前钩子：完整门槛 `scripts/check.sh` |
 | `cli-netswitch.sh` | CLI 统一入口（设置 PYTHONPATH 后调用 `netswitch.cli`） |
 | `tui-netswitch.sh` | TUI 入口（调用 `netswitch.tui`） |
 | `status.sh` | 查看状态（=`cli-netswitch.sh status`） |
