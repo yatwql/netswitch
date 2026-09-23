@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import socket
 
-from . import detect, ip, routing
+from . import detect, ip, routing, version
 from .model import Config
 
 _STATE_LABEL = {
@@ -21,7 +21,8 @@ def print_status(config: Config) -> None:
     interfaces = detect.detect_interfaces()
     backend = routing.resolve_backend(config.routing.backend)
 
-    print(f"主机: {socket.gethostname()}")
+    print(f"主机: {socket.gethostname()}   版本: {version.__version__}")
+    print(f"程序更新: {version.program_mtime_str()}")
     print("== 物理网卡 ==")
     for i in interfaces:
         ssid = f" SSID={i.ssid or '-'}" if i.type == "wireless" else ""

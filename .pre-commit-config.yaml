@@ -1,15 +1,27 @@
 repos:
   - repo: local
     hooks:
-      - id: pytest
-        name: 运行测试
-        entry: bash scripts/run-test.sh
+      - id: check-branch
+        name: 分支策略（禁 master 直接提交）
+        entry: bash scripts/check-branch.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: check-version
+        name: 版本一致性
+        entry: bash scripts/check-version.sh
         language: system
         pass_filenames: false
         always_run: true
       - id: check-docs
         name: 核对文档
         entry: bash scripts/check-docs.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: pytest
+        name: 运行测试
+        entry: bash scripts/run-test.sh
         language: system
         pass_filenames: false
         always_run: true

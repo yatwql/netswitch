@@ -154,7 +154,7 @@ cp data/config/config.example.json data/config/config.json
 
 | 子命令 | 作用 |
 |--------|------|
-| `status` | 查看状态（主机名、网卡/IP/状态/metric/规则） |
+| `status` | 查看状态（主机名、版本、程序更新时间、网卡/IP/状态/metric/规则） |
 | `detect [--write]` | 重新探测网卡；`--write` 写回 `interfaces` |
 | `iface up\|down <name> [--force]` | 开启 / 关闭网卡 |
 | `metric set <name> <n>` | 设置 metric（越小越优先） |
@@ -182,7 +182,7 @@ cp data/config/config.example.json data/config/config.json
 | `q` / `Ctrl+C` | 退出（输入框中 `Ctrl+C` 也可退出） |
 
 - 网卡颜色：**分流生效网卡黄 / 主网卡绿 / 其他网卡蓝 / 被禁止或不可用红**；分流规则生效时，其出口网卡在规则行「生效网卡」与网卡列表均显示**黄色**。**无线网卡额外显示当前 SSID**（未连接显示 `-`）。
-- 界面每 ~1.5s 自动刷新（底部显示「最后刷新 `yyyyMMdd HH:mm:ss`」）；标题栏主机名显示为**蓝色**；所有字母键**不区分大小写**。
+- 界面每 ~1.5s 自动刷新（底部显示「最后刷新 `yyyyMMdd HH:mm:ss +ZZZZ`」）；标题栏主机名显示为**蓝色**，标题下方显示**版本号与程序更新时间**（`yyyyMMdd HH:mm:ss +ZZZZ`）；所有字母键**不区分大小写**。
 
 ### 4.3 便捷包装脚本
 

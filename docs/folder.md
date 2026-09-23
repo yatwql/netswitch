@@ -42,7 +42,8 @@ switch/
 
 | 文件 | 简介 |
 |------|------|
-| `__init__.py` | 包标识，定义版本号 `__version__` |
+| `__init__.py` | 包标识，导入 `__version__` |
+| `version.py` | 版本号与构建信息（唯一来源）：`__version__`、程序更新时间 |
 | `exec.py` | 命令执行封装：root 检查、dry-run、`ExecError` 统一错误 |
 | `log.py` | 运行日志：写入 `logs/netswitch.log`（按大小轮转） |
 | `model.py` | 数据模型：`Interface`/`IfaceCfg`/`RuleCfg`/`CidrsCfg`/`Config` 等 dataclass |
@@ -70,6 +71,7 @@ switch/
 | `test_routing.py` | 后端解析、nft 脚本生成、规则筛选、规则是否已应用 |
 | `test_apply.py` | 默认路由快照与 state.json 读写 |
 | `test_tui.py` | 字母键大小写归一化 |
+| `test_version.py` | 版本号与程序更新时间格式 |
 | `test_log.py` | 日志写入与命令记录 |
 | `test_cli.py` | 命令行参数解析 |
 
@@ -78,10 +80,16 @@ switch/
 | 文件 | 简介 |
 |------|------|
 | `install.sh` | 一次性安装：装依赖 + 生成配置并自动探测 + 预检（可选 `--with-systemd`） |
+| `release.sh` | 发布正式版：dev→master（打 tag `vX.Y`），并自动把 dev 版本递增为 `X.(Y+1)-dev` |
 | `preflight.sh` | 高危操作前预检（只读，不改变系统状态） |
 | `check-docs.sh` | 文档一致性基础核对（提交门槛） |
 | `run-test.sh` | 运行测试（无需 root） |
-| `check.sh` | 提交前完整核对：测试 + 文档一致性 |
+| `check.sh` | 提交前完整核对：测试 + 文档一致性 + 版本一致性 |
+| `check-version.sh` | 版本一致性核对（`version.py` 与 `README.md` 一致） |
+| `check-branch.sh` | 分支策略核对（禁止在 `master`/`main` 直接提交） |
+| `install-git-hooks.sh` | 安装版本化 git 钩子（`core.hooksPath=scripts/git-hooks`） |
+| `git-hooks/pre-commit` | 提交前钩子：分支策略 + 版本一致性 + 文档核对 |
+| `git-hooks/pre-push` | 推送前钩子：完整门槛 `scripts/check.sh` |
 | `cli-netswitch.sh` | CLI 统一入口（设置 PYTHONPATH 后调用 `netswitch.cli`） |
 | `tui-netswitch.sh` | TUI 入口（调用 `netswitch.tui`） |
 | `status.sh` | 查看状态（=`cli-netswitch.sh status`） |

@@ -47,7 +47,8 @@ switch/
 ├── src/
 │   ├── python/                        # Python 源码
 │   │   └── netswitch/
-│   │       ├── __init__.py        # 版本号
+│   │       ├── __init__.py        # 包标识（导入 __version__）
+│   │       ├── version.py         # 版本号与构建信息（唯一来源）
 │   │       ├── exec.py            # 命令执行封装：root 检查 / dry-run / 日志
 │   │       ├── log.py             # 运行日志（logs/netswitch.log，轮转）
 │   │       ├── model.py           # dataclass：Interface / Route / Rule / NetState
@@ -70,10 +71,16 @@ switch/
 │       ├── test_routing.py
 │       ├── test_apply.py
 │       ├── test_tui.py
+│       ├── test_version.py
 │       ├── test_cli.py
 │       └── test_log.py
 ├── scripts/                           # shell 便捷入口，调用 src/python 的程序
 │   ├── install.sh            # 一次性安装（装依赖/生成配置/预检，可选 --with-systemd）
+│   ├── release.sh            # 发布正式版（dev→master，打 tag，自动递增 dev 版本）
+│   ├── check-version.sh      # 版本一致性核对
+│   ├── check-branch.sh       # 分支策略核对（禁 master 直接提交）
+│   ├── install-git-hooks.sh  # 安装版本化 git 钩子
+│   ├── git-hooks/            # pre-commit / pre-push 钩子
 │   ├── preflight.sh           # 高危操作前预检（只读）
 │   ├── detect.sh              # 重新探测网络并生成配置（调用 CLI detect）
 │   ├── cli-netswitch.sh       # CLI 统一入口：调用 netswitch.cli
@@ -361,7 +368,7 @@ tui-netswitch.sh                                   # 启动 TUI（scripts 便捷
 纯键盘单屏界面（无鼠标、无第三方库）：
 
 - **标题栏**：显示当前主机名（**蓝色**）：`netswitch · <主机名> · 网卡切换控制台`。
-- **启动即拉取 + 自动刷新**：进入即拉取实时网卡信息（数量 1~N、有线/无线、连接状态、IP、metric、默认路由）；界面每 ~1.5s 自动刷新，`f` 或 `F5` 手动刷新；底部状态栏显示“最后刷新 yyyyMMdd HH:mm:ss”。因此开启网卡后 DHCP 获取 IP、链路变化会自动显示。
+- **启动即拉取 + 自动刷新**：进入即拉取实时网卡信息（数量 1~N、有线/无线、连接状态、IP、metric、默认路由）；界面每 ~1.5s 自动刷新，`f` 或 `F5` 手动刷新；底部状态栏显示“最后刷新 yyyyMMdd HH:mm:ss +ZZZZ”。因此开启网卡后 DHCP 获取 IP、链路变化会自动显示。
 - **导航**：`↑`/`↓` 在所有条目（网卡在前、规则在后）间移动选中项；数字 `1`…`N` 直接选网卡；`g` 切换规则；`Enter` 对**网卡**执行默认动作（**设为主网卡**）；选中规则时 `Enter` 仅提示，不直接执行。
 - **网卡区颜色语义**：
   - **分流生效网卡**（某条已应用规则的出口）→ **黄色**
