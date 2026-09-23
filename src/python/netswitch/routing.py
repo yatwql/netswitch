@@ -1,13 +1,17 @@
 """分流规则的策略路由（nftables / iprule 双后端，整表原子重建）。"""
 from __future__ import annotations
 
+import json
 import shutil
-from typing import List, Optional, Set
+from typing import Callable, List, Optional, Set
 
 from . import cidrs, detect, exec as ex, ip, log
 from .model import Config, RuleCfg
 
 _log = log.get_logger()
+
+# mainroute 后端给主表明细路由打的 proto 标记（便于判断/清理）
+MAINROUTE_PROTO = 200
 
 
 def _run_or_hint(cmd, *, dry_run: bool = False) -> None:
@@ -35,8 +39,23 @@ def resolve_backend(pref: str) -> str:
     return "iprule"
 
 
-def rule_applied(rule: RuleCfg) -> bool:
-    """该规则是否已在系统生效（独立路由表存在默认路由）。"""
+def rule_applied(config: Config, rule: RuleCfg) -> bool:
+    """该规则是否已在系统生效（按后端判断）。"""
+    backend = resolve_backend(config.routing.backend)
+    if backend == "mainroute":
+        if not rule.interface:
+            return False
+        try:
+            out = ex.run(["ip", "-j", "route", "show", "table", "main"],
+                         check=False, readonly=True).stdout
+            for rt in json.loads(out or "[]"):
+                if rt.get("dst") == "default" or rt.get("dev") != rule.interface:
+                    continue
+                if str(rt.get("protocol")) == str(MAINROUTE_PROTO):
+                    return True
+        except Exception:  # noqa: BLE001
+            return False
+        return False
     out = ex.run(["ip", "route", "show", "table", str(rule.table_id)],
                  check=False, readonly=True).stdout
     return "default" in out
@@ -141,8 +160,10 @@ def clear_rules(config: Config, *, dry_run: bool = False) -> None:
 
 def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
                 exclude: Optional[Set[str]] = None,
-                dry_run: bool = False) -> None:
-    """清空后重建指定规则集（幂等）。"""
+                dry_run: bool = False,
+                warn: Optional[Callable[[str], None]] = None) -> int:
+    """清空后重建指定规则集（幂等）。返回成功应用的规则数。"""
+    _warn = warn or (lambda m: print(f"[warn] {m}"))
     clear_rules(config, dry_run=dry_run)
 
     rules = _select_rules(config, only=only, exclude=exclude)
@@ -153,7 +174,7 @@ def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
     for r in rules:
         rule_cidrs = cidrs.fetch_cidrs(r.cidrs)
         if not rule_cidrs:
-            print(f"[warn] 规则 {r.name} 无可用 CIDR，跳过")
+            _warn(f"规则 {r.name} 无可用 CIDR，跳过")
             continue
         active.append(r)
 
@@ -163,7 +184,8 @@ def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
         if backend == "mainroute":
             for c in rule_cidrs:
                 _run_or_hint(["ip", "route", "replace", c, "via", gw,
-                              "dev", r.interface], dry_run=dry_run)
+                              "dev", r.interface, "proto", str(MAINROUTE_PROTO)],
+                             dry_run=dry_run)
             _log.info("mainroute: %s -> %s（%d 个网段）",
                       r.name, r.interface, len(rule_cidrs))
             continue
@@ -194,6 +216,7 @@ def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
         ex.run(["nft", "-f", "-"], dry_run=dry_run, input=script)
 
     _log.info("apply_rules: 后端=%s 规则=%s", backend, [r.name for r in active])
+    return len(active)
 
 
 def backend_note(backend: str) -> str:

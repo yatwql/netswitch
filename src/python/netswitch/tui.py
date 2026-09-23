@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import curses
+import os
 import socket
 import time
 from typing import Dict, List, Optional, Tuple
@@ -130,11 +131,17 @@ class _App:
         return ans is not None and ans.lower() in ("y", "yes")
 
     def _guard(self, fn) -> None:
+        if os.geteuid() != 0:
+            self.msg = "需要 root：请用 sudo 运行 scripts/tui-netswitch.sh"
+            return
         try:
             msg = fn()
             self.msg = msg if isinstance(msg, str) and msg else "完成"
         except Exception as exc:  # noqa: BLE001
             self.msg = f"错误: {exc}"
+
+    def _warn(self, m: str) -> None:
+        self.msg = f"⚠ {m}"
 
     # ---------- 选中 / 导航 ----------
     def _sel_iface(self) -> Optional[str]:
@@ -200,7 +207,7 @@ class _App:
         self.applied = {}
         for r in self.config.rules:
             try:
-                self.applied[r.name] = routing.rule_applied(r)
+                self.applied[r.name] = routing.rule_applied(self.config, r)
             except Exception:  # noqa: BLE001
                 self.applied[r.name] = False
         self.active_egress = {
@@ -389,8 +396,10 @@ class _App:
 
         def do():
             config_mod.update_rule_interface(self.config_path, rule.name, target)
-            routing.apply_rules(self.config)   # 整表重建，保留其它规则
-            return f"规则 {rule.name} 生效网卡: {target or '未分流'}（已写入配置）"
+            n = routing.apply_rules(self.config, warn=self._warn)   # 整表重建，保留其它规则
+            be = routing.resolve_backend(self.config.routing.backend)
+            return (f"规则 {rule.name} 出口={target or '未分流'}；后端={be}；"
+                    f"已应用 {n} 条（已写入配置）")
 
         self._guard(do)
         self.refresh()
@@ -403,7 +412,13 @@ class _App:
         if not self._confirm(f"确认应用规则 {rule.name}?"):
             self.msg = "已取消"
             return
-        self._guard(lambda: routing.apply_rules(self.config))
+
+        def do():
+            n = routing.apply_rules(self.config, warn=self._warn)
+            be = routing.resolve_backend(self.config.routing.backend)
+            return f"已应用 {n} 条规则（后端={be}）"
+
+        self._guard(do)
         self.refresh()
 
     def do_rule_clear(self) -> None:
@@ -419,8 +434,8 @@ class _App:
 
         def do():
             config_mod.update_rule_interface(self.config_path, name, None)
-            routing.apply_rules(self.config)   # 重建；已清空 interface 的规则自动不再生效
-            return f"已撤销规则 {name} 的分流（已写入配置）"
+            n = routing.apply_rules(self.config, warn=self._warn)   # 重建；已清空 interface 的规则自动不再生效
+            return f"已撤销规则 {name} 的分流（已写入配置，剩余 {n} 条）"
 
         self._guard(do)
         self.refresh()

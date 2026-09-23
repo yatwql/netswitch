@@ -37,7 +37,7 @@ def test_apply_rules_mainroute_commands(monkeypatch):
     )
     routing.apply_rules(cfg)
     cmds = [" ".join(c) for c in calls]
-    assert "ip route replace 140.82.112.0/20 via 192.168.1.1 dev wlp129s0" in cmds
+    assert "ip route replace 140.82.112.0/20 via 192.168.1.1 dev wlp129s0 proto 200" in cmds
     # mainroute 不使用 ip rule / nft
     assert not any(c.startswith("ip rule") for c in cmds)
     assert not any(c.startswith("nft") for c in cmds)
@@ -73,12 +73,29 @@ class _P:
 
 
 def test_rule_applied(monkeypatch):
+    from netswitch.model import Config
+
+    monkeypatch.setattr(routing.ip, "policy_routing_supported", lambda: True)
+    cfg = Config()
     rule = RuleCfg(name="r", table_id=200)
     monkeypatch.setattr(routing.ex, "run",
                         lambda cmd, **kw: _P("default via 1.2.3.4 dev eth0\n"))
-    assert routing.rule_applied(rule) is True
+    assert routing.rule_applied(cfg, rule) is True
     monkeypatch.setattr(routing.ex, "run", lambda cmd, **kw: _P(""))
-    assert routing.rule_applied(rule) is False
+    assert routing.rule_applied(cfg, rule) is False
+
+
+def test_rule_applied_mainroute(monkeypatch):
+    from netswitch.model import Config, RoutingCfg
+
+    cfg = Config(routing=RoutingCfg(backend="mainroute"))
+    rule = RuleCfg(name="r", interface="wlp129s0")
+    ok = '[{"dst":"140.82.112.0/20","dev":"wlp129s0","protocol":"200"}]'
+    monkeypatch.setattr(routing.ex, "run", lambda cmd, **kw: _P(ok))
+    assert routing.rule_applied(cfg, rule) is True
+    other = '[{"dst":"140.82.112.0/20","dev":"enp2s0","protocol":"200"}]'
+    monkeypatch.setattr(routing.ex, "run", lambda cmd, **kw: _P(other))
+    assert routing.rule_applied(cfg, rule) is False
 
 
 def test_run_or_hint_eopnotsupp(monkeypatch):

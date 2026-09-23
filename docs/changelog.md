@@ -61,6 +61,7 @@
 - 缺省分流规则：`config.example.json` 自带一条 `github` 规则（出口网卡留空）；新增 `cli-netswitch.sh seed-defaults`（`rules` 为空时写入）与 `config.seed_default_rules()`；`install.sh` 自动调用，新装机不再“无规则”。
 - 策略路由能力诊断：`preflight.sh` 新增「策略路由能力」项（探测自定义路由表 + `ip rule`）；`routing._run_or_hint()` 在 `RTNETLINK: Operation not supported` 时给出明确原因与提示（内核 `CONFIG_IP_MULTIPLE_TABLES` / 受限容器）；`faq.md` / `technical.md` 同步说明。
 - 新增 **mainroute 后端**（回退方案）：不支持策略路由时，在主路由表按目标网段加明细路由分流（不需多路由表/`ip rule`）；`backend: auto` 自动回退；`preflight.sh` 同时检测主表路由能力；`status` 显示后端说明。
+- 修复 mainroute 生效判定与 TUI 可见性：`routing.rule_applied()` 改为**按后端判断**（mainroute 用主表中 `proto 200` 的明细路由判定，之前写死查独立路由表导致永远“未应用”）；`apply_rules()` 返回应用条数并支持告警回调（TUI 状态栏可见，不再被 `print` 淹没）；TUI 增加 **root 检查**；`status` 规则状态显示「已应用/未应用」。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。

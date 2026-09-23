@@ -274,7 +274,7 @@ done
 ```
 
 - `backend: auto` 时，若探测到策略路由不可用，**自动使用 mainroute**。
-- 清理：逐个 `ip route del <cidr> table main`。
+- 明细路由带 `proto 200` 标记，供 `status`/TUI 判定“已应用”与清理（`ip route del <cidr> table main`）。
 - 局限：仅按目标网段分流；目标网段多则主表条目较多；不支持按域名等。
 
 **撤销（revert / rule clear）**

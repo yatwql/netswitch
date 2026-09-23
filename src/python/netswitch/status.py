@@ -41,7 +41,9 @@ def print_status(config: Config) -> None:
     if not config.rules:
         print("  （无）")
     for r in config.rules:
-        mark = "生效" if r.enabled else "禁用"
+        if not r.enabled:
+            mark = "禁用"
+        else:
+            mark = "已应用" if routing.rule_applied(config, r) else "未应用"
         iface = r.interface or "-"
-        print(f"  {r.name:<12} 出口={iface:<12} 状态={mark} "
-              f"table={r.table_id} fwmark={r.fwmark}")
+        print(f"  {r.name:<12} 出口={iface:<12} 状态={mark}")
