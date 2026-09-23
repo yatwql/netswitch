@@ -47,9 +47,12 @@ class _App:
         self.active_egress: set = set()   # 已被应用规则的出口网卡（黄色）
         self.hostname = socket.gethostname()
         self.version_line = (f"版本 v{version.__version__} · "
-                             f"程序更新 {version.program_mtime_str()}")
+                             f"程序更新 {version.program_mtime_str()} · "
+                             f"{version.user_line()}")
         self.sel: Optional[Tuple[str, str]] = None   # ("iface"|"rule", name)
         self.msg = ""
+        if not version.is_root():
+            self.msg = "⚠ 非 root：写操作不可用，请用 sudo 运行 scripts/tui-netswitch.sh"
         self.last_refresh = ""
         self._refresh_ms = 1500          # 自动刷新间隔（毫秒）
         curses.curs_set(0)
@@ -220,11 +223,14 @@ class _App:
     def draw(self) -> None:
         self.stdscr.erase()
         h, _ = self.stdscr.getmaxyx()
-        self._add_row(0, [
+        title = [
             ("netswitch · ", curses.A_BOLD),
             (self.hostname, self._cp(2) | curses.A_BOLD),   # 主机名：蓝色
             (" · 网卡切换控制台（q/Ctrl+C 退出，f/F5 刷新）", curses.A_BOLD),
-        ])
+        ]
+        if not version.is_root():
+            title.append(("  ⚠ 非root·只读", self._cp(3) | curses.A_BOLD))
+        self._add_row(0, title)
         self._add(1, 0, self.version_line, curses.A_DIM)
 
         y = 2

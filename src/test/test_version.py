@@ -18,6 +18,11 @@ def test_info_line_contains_version():
     assert version.__version__ in version.info_line()
 
 
+def test_user_line():
+    assert "运行身份" in version.user_line()
+    assert isinstance(version.login_name(), str) and version.login_name()
+
+
 def test_release_and_next_dev():
     assert version.release_version("0.1-dev") == "0.1"
     assert version.release_version("0.1") == "0.1"

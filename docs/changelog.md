@@ -63,6 +63,7 @@
 - 新增 **mainroute 后端**（回退方案）：不支持策略路由时，在主路由表按目标网段加明细路由分流（不需多路由表/`ip rule`）；`backend: auto` 自动回退；`preflight.sh` 同时检测主表路由能力；`status` 显示后端说明。
 - 修复 mainroute 生效判定与 TUI 可见性：`routing.rule_applied()` 改为**按后端判断**（mainroute 用主表中 `proto 200` 的明细路由判定，之前写死查独立路由表导致永远“未应用”）；`apply_rules()` 返回应用条数并支持告警回调（TUI 状态栏可见，不再被 `print` 淹没）；TUI 增加 **root 检查**；`status` 规则状态显示「已应用/未应用」。
 - 修复 `clear_rules` 在**不支持策略路由**的机器上误导操作：仅在后端使用且内核支持时才清理 `ip rule`/独立路由表（之前无条件 `ip rule show` 会 EOPNOTSUPP，导致 apply 在清理阶段就失败）；nft 删表仅在 nftables 后端执行；`exec.run` 将 `check=False` 的失败降为 **DEBUG**，日志不再刷 “Operation not supported / Could not process rule” 噪声。
+- 权限与用户可见性：`version.user_line()`/`login_name()`（`sudo` 时取 `SUDO_USER`）；TUI 标题栏（非 root 显示「⚠ 非root·只读」）与版本行、`status`、`preflight.sh` 均显示**当前登录用户/运行身份**；非 root 启动 TUI 即时提示用 sudo。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。

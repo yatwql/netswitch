@@ -23,6 +23,7 @@ def print_status(config: Config) -> None:
 
     print(f"主机: {socket.gethostname()}   版本: {version.__version__}")
     print(f"程序更新: {version.program_mtime_str()}")
+    print(version.user_line())
     print("== 物理网卡 ==")
     for i in interfaces:
         ssid = f" SSID={i.ssid or '-'}" if i.type == "wireless" else ""

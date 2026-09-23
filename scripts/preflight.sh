@@ -37,9 +37,13 @@ CONFIG="$REPO_ROOT/data/config/config.json"
 sec "1. 基础环境"
 
 if [ "$(id -u)" -eq 0 ]; then
-  ok "以 root 运行"
+  if [ -n "${SUDO_USER:-}" ]; then
+    ok "以 root 运行（sudo，登录用户：$SUDO_USER）"
+  else
+    ok "以 root 运行（登录用户：$(id -un)）"
+  fi
 else
-  warn "非 root：预检只读可运行，但实际网卡/路由操作需 root"
+  warn "非 root（当前用户：$(id -un)）：预检只读可运行，但实际网卡/路由操作需 root（请 sudo）"
 fi
 
 for cmd in ip python3; do

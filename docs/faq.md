@@ -105,3 +105,8 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 
 **Q22：怎么开机自动应用配置？**
 `sudo scripts/cli-netswitch.sh install-systemd`（或 `sudo scripts/install.sh --with-systemd`）。服务开机联网后执行 `apply`（幂等）。
+
+**Q24：我用普通用户登录、用 `sudo` 运行，会有问题吗？**
+`sudo` 运行**没问题**（`euid=0`，权限检查通过；`SUDO_USER` 会显示你的登录名）。两点注意：
+- **写操作必须 sudo**（非 root 运行 TUI/CLI 会明确提示；TUI 标题会显示「⚠ 非root·只读」）。
+- 用 sudo 跑过后，`data/config/*`、`logs/*` 会变成 **root 所有**；之后非 root 执行 `install.sh` / `detect --write` 会无权限。建议**统一用 sudo**，或 `sudo chown -R "$USER" data logs` 修回所有权。

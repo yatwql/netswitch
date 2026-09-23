@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import functools
+import os
+import pwd
 import re
 import subprocess
 import time
@@ -60,3 +62,32 @@ def next_dev_version(version: str = __version__) -> str:
     if not m:
         return version
     return f"{m.group(1)}.{int(m.group(2)) + 1}-dev"
+
+
+def _user_name() -> str:
+    try:
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except Exception:  # noqa: BLE001
+        return os.environ.get("USER", "?")
+
+
+def run_name() -> str:
+    """当前运行身份用户名。"""
+    return _user_name()
+
+
+def login_name() -> str:
+    """发起操作的用户（sudo 时取 SUDO_USER，否则当前用户）。"""
+    return os.environ.get("SUDO_USER") or _user_name()
+
+
+def is_root() -> bool:
+    return os.geteuid() == 0
+
+
+def user_line() -> str:
+    """用户/权限一行说明。"""
+    if is_root():
+        who = login_name()
+        return f"运行身份: root（登录用户 {who}）" if who != "root" else "运行身份: root"
+    return f"运行身份: {_user_name()}（非 root，写操作需 sudo）"
