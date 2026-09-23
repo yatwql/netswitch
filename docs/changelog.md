@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1] - 2026-09-23
+
 ### Added
 - 项目立项：双物理网卡切换与 GitHub 分流工具（netswitch）。
 - 需求分析：完成原始需求的读取与整理（并入 requirements.md）。
@@ -75,4 +77,4 @@
 - 格式：正式版 `<major>.<minor>`（无后缀，如 `0.1`）；开发版 `<major>.<minor>-dev`（如 `0.2-dev`）。
 - 分支：日常开发在 `dev`；发布正式版时才合并到 `master`。
 - 发布流程：`scripts/release.sh --yes` —— 把 dev 版本转为正式版并归档本文件 → 合并 `dev` 到 `master` 并打 tag `vX.Y` → **自动把 dev 版本递增为 `X.(Y+1)-dev`**。
-- 当前开发版本：`0.1-dev`（见 `version.py`）。
+- 当前开发版本：`0.1`（见 `version.py`）。
