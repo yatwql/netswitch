@@ -31,7 +31,7 @@
 
 - 版本号唯一来源：`src/python/netswitch/version.py` 的 `__version__`（当前 `0.1-dev`）。
 - **版本约定**：正式版 `<major>.<minor>`（无后缀，如 `0.1`）；开发版 `<major>.<minor>-dev`（如 `0.2-dev`）。
-- **分支策略**：日常开发在 **`dev`** 分支进行；仅在**发布正式版本**时才将 `dev` 合并到 `master`。
+- **分支策略**：日常开发在 **`dev`** 分支进行（它是 GitHub 默认分支）；仅在**发布正式版本**时才将 `dev` 合并到 `master`（经 `release.sh` 或 PR，见下）。
 - **发布**：运行 `scripts/release.sh`（默认演练，`--yes` 执行）：把 dev 版本转为正式版并归档 changelog → 合并 `dev` 到 `master` 并打 tag `vX.Y` → **自动把 dev 版本递增为 `X.(Y+1)-dev`** 并推送。
 - 文档中的版本号须与 `version.py` 保持一致；程序（TUI/status/日志）会显示版本号与程序更新时间。
 
@@ -63,19 +63,50 @@ scripts/install-git-hooks.sh     # 设置 core.hooksPath = scripts/git-hooks
 - `data/config/config.json`、`data/config/state.json`、`data/config/cache-*.json`（运行时/本地文件，已在 .gitignore）。
 - `logs/`（运行日志目录，已在 .gitignore）。
 
-## GitHub 仓库一次性设置（分支保护）
+## GitHub 仓库与协作流程（分支保护 / PR）
 
-CI 工作流（`.github/workflows/ci.yml`）的 job 名为 `test`（显示为 `CI / test`）。要让「测试不通过就不能合并」，需在 GitHub 上开启分支保护：
+CI 工作流（`.github/workflows/ci.yml`）的 job 名为 `test`（显示为 `CI / test`）。
 
-1. 仓库 `Settings → Branches → Add branch protection rule`。
-2. `Branch name pattern` 填 `main`（或 `master`）。
-3. 勾选 **Require status checks to pass before merging**。
-4. 搜索并勾选 **`test`**（即 `CI / test`）。
-5. （推荐）勾选 **Require branches to be up to date before merging**。
-6. 保存。
+### 分支模型
 
-本地预提交钩子（可选，commit 前自动跑）：
+- `master`：**发布分支**（仅正式版本；受保护）。
+- `dev`：**默认 / 开发分支**（日常开发都在这里）。
+
+### 日常协作
+
+- 日常提交直接推到 `dev`（受本地钩子与 CI 约束）。
+- 需评审/多人协作时：从 `dev` 拉特性分支 → 开 PR → 合并回 `dev`。
+- 发布：`scripts/release.sh --yes`（`dev` → `master`，打 tag `vX.Y`，自动递增 dev）。
+
+### 一次性设置（GitHub 网页）
+
+1. **默认分支设为 `dev`**：`Settings → General → Default branch → dev`（新增 PR 默认目标为 dev）。
+2. **保护 `master`**：`Settings → Branches → Add branch protection rule`，pattern `master`：
+   - 勾选 **Require a pull request before merging**（若仅你一人，可不再勾 Require approvals）。
+   - 勾选 **Require status checks to pass before merging**，搜索并勾选 **`test`**（即 `CI / test`）。
+   - （推荐）勾选 **Require branches to be up to date before merging**。
+   - 勾选 **Do not allow force pushes** / **Do not allow deletions**。
+   - ⚠️ 若继续用 `scripts/release.sh` **直推 master**：需允许绕过（把管理员加入 **bypass** 列表，或取消 “Do not allow bypassing the above settings”）；否则请用下面的 PR 方式发布。
+3. （推荐）**保护 `dev`**：pattern `dev`，勾选 Require status checks → `test`。
+
+### 若严格「必须 PR 才能合并 master」
+
+不要用 `release.sh` 直推，改为：
 
 ```bash
-pip install pre-commit && pre-commit install
+# a) 推送开发分支
+git push origin dev
+# b) 在 GitHub 开 dev -> master 的 PR，等 test 通过后 Merge
+# c) 打 tag 并递增 dev 版本
+git checkout master && git pull
+git tag -a vX.Y -m "release X.Y" && git push origin vX.Y
+# 然后回到 dev，把 version.py 递增为 X.(Y+1)-dev（含 README/changelog 同步）并提交
+```
+
+本地钩子（可选，二选一）：
+
+```bash
+scripts/install-git-hooks.sh                                   # 版本化钩子（core.hooksPath）
+# 或
+pip install pre-commit && pre-commit install                    # pre-commit 框架
 ```
