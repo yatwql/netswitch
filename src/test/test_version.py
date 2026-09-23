@@ -1,8 +1,11 @@
+import re
+
 from netswitch import version
 
 
-def test_version_value():
-    assert version.__version__ == "0.1-dev"
+def test_version_format():
+    # 正式版 X.Y 或开发版 X.Y-dev（不硬编码具体版本，避免发布时失败）
+    assert re.match(r"^\d+\.\d+(-dev)?$", version.__version__)
 
 
 def test_program_mtime_str_format():

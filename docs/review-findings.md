@@ -73,6 +73,7 @@
 1. **[缺陷] extra 未过滤 IPv6**：`source: manual` 时 `extra` 中的 IPv6/非法项会直接进入结果，违反 v1 仅 IPv4。→ 已修复：统一 `_finish` 过滤。
 2. **[缺陷] 无 nft 时 clear_rules 崩溃**：`subprocess` 找不到 `nft` 二进制抛 FileNotFoundError，`check=False` 无法捕获。→ 已修复：`shutil.which("nft")` 守卫。
 3. **[缺陷] 空 CIDR 规则仍建路由表**：CIDR 为空的规则会残留路由表与 fwmark 规则。→ 已修复：先取 CIDR，空则跳过。
+4. **[缺陷] 测试硬编码版本号导致发布失败**：`test_version_value` 断言 `__version__ == "0.1-dev"`；发布时版本变为 `0.1`，pre-push 钩子跑测试失败、发布中断。→ 已修复：改为校验版本格式（`X.Y` / `X.Y-dev`）。
 
 ---
 
@@ -83,3 +84,4 @@
 | - | M0 | 初次设计自查（9 项） |
 | - | M0 | 设计复盘第 2 轮（10 项，总体设计/可配置化） |
 | - | M4 | 实现阶段自查（3 项） |
+| - | M4 | 发布过程缺陷（1 项） |

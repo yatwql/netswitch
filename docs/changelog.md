@@ -67,6 +67,7 @@
 
 ### Fixed
 - `install.sh`：修复无 `sudo` 环境报 `sudo: command not found`——自动检测 root/sudo；依赖优先用户级 `pip install --user`，无提权能力时优雅跳过 systemd。
+- 修复发布时 pre-push 失败：`test_version_value` 硬编码 `0.1-dev`，改为校验版本格式（`X.Y` / `X.Y-dev`），使发布（版本变为 `X.Y`）时测试仍通过。
 
 ## 版本约定
 
