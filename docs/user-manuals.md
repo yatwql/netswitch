@@ -72,7 +72,7 @@ cp data/config/config.example.json data/config/config.json
 ```
 
 > JSON **不支持注释**；字段含义见下方 3.2 与 [technical.md](technical.md) §3.2。
-> 默认 `rules` 为**空**（通用）——要分流某类流量，在 `rules` 里添加一条；`github` 仅作示例。
+> 默认自带一条 **`github` 缺省规则**（分流 github.com 相关流量），其**出口网卡留空**——在 TUI 中选中该规则按 `e` 选择出口网卡，或编辑 `rules[].interface`。
 
 ### 3.1 最小可用配置（示例：GitHub 走无线）
 

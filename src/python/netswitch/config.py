@@ -16,6 +16,7 @@ from .model import (
 )
 
 DEFAULT_CONFIG = "data/config/config.json"
+DEFAULT_CONFIG_EXAMPLE = "data/config/config.example.json"
 _log = log.get_logger()
 
 
@@ -169,4 +170,31 @@ def update_rule_interface(path: str, rule_name: str, interface) -> bool:
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(raw, fh, ensure_ascii=False, indent=2)
     _log.info("config: 规则 %s 生效网卡 -> %s（%s）", rule_name, interface, path)
+    return True
+
+
+def seed_default_rules(path: str = DEFAULT_CONFIG) -> bool:
+    """若配置的 rules 为空，则从同目录 config.example.json 拷贝缺省规则。
+
+    返回是否写入。缺省规则定义在 `config.example.json`（数据，非代码写死）。
+    """
+    if not os.path.exists(path):
+        return False
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = json.load(fh)
+    if raw.get("rules"):
+        return False
+    example = os.path.join(os.path.dirname(path) or ".",
+                           os.path.basename(DEFAULT_CONFIG_EXAMPLE))
+    if not os.path.exists(example):
+        return False
+    with open(example, "r", encoding="utf-8") as fh:
+        ex = json.load(fh)
+    rules = ex.get("rules") or []
+    if not rules:
+        return False
+    raw["rules"] = rules
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(raw, fh, ensure_ascii=False, indent=2)
+    _log.info("config: 写入缺省规则 %d 条 -> %s", len(rules), path)
     return True

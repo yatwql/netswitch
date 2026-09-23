@@ -58,6 +58,15 @@ def cmd_detect(args) -> int:
     return 0
 
 
+def cmd_seed_defaults(args) -> int:
+    if config_mod.seed_default_rules(args.config):
+        print(f"已写入缺省分流规则到 {args.config}")
+        print("提示：在 TUI 中选中规则按 e 选择出口网卡，或编辑 config.json 的 rules[].interface")
+    else:
+        print("无需写入（已有规则，或 config.example.json 中无规则）")
+    return 0
+
+
 def cmd_iface(args) -> int:
     ex.require_root()
     up = args.action == "up"
@@ -170,6 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--write", action="store_true", help="写回配置（仅更新 interfaces）")
     d.add_argument("--dry-run", action="store_true")
 
+    sub.add_parser("seed-defaults", help="rules 为空时写入缺省规则")
+
     i = sub.add_parser("iface", help="网卡开关")
     i.add_argument("action", choices=["up", "down"])
     i.add_argument("name")
@@ -206,6 +217,7 @@ def main(argv=None) -> int:
     handlers = {
         "status": cmd_status,
         "detect": cmd_detect,
+        "seed-defaults": cmd_seed_defaults,
         "iface": cmd_iface,
         "metric": cmd_metric,
         "rule": cmd_rule,

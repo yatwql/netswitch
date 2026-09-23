@@ -63,3 +63,17 @@ def test_update_rule_interface(tmp_path):
     assert cfg.load(p, probe=False).rules[0].interface is None
     # 未找到规则
     assert cfg.update_rule_interface(p, "nope", "eth0") is False
+
+
+def test_seed_default_rules(tmp_path):
+    # 同目录下的 config.example.json 作为缺省规则来源
+    (tmp_path / "config.example.json").write_text(
+        json.dumps({"rules": [{"name": "github", "cidrs": {}}]}), encoding="utf-8")
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"version": 1, "rules": []}), encoding="utf-8")
+
+    assert cfg.seed_default_rules(str(p)) is True
+    c = cfg.load(str(p), probe=False)
+    assert [r.name for r in c.rules] == ["github"]
+    # 已有规则 -> 不覆盖
+    assert cfg.seed_default_rules(str(p)) is False

@@ -6,6 +6,18 @@
   ],
   "metrics": { "preferred": 100, "fallback": 600 },
   "routing": { "backend": "auto", "nft_table": "netswitch" },
-  "rules": [],
+  "rules": [
+    {
+      "name": "github",
+      "enabled": true,
+      "cidrs": {
+        "source": "url",
+        "url": "https://api.github.com/meta",
+        "fields": ["git", "web", "api"],
+        "ttl_hours": 24,
+        "extra": []
+      }
+    }
+  ],
   "state_file": "data/config/state.json"
 }

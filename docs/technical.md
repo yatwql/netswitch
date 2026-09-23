@@ -138,7 +138,7 @@ switch/
 }
 ```
 
-> 说明：`data/config/config.example.json` 默认 `rules` 为空（完全通用）。上面的 `github` 规则仅作**配置示例**，请按需替换为你实际要分流的流量。
+> 说明：`data/config/config.example.json` **自带一条 `github` 缺省规则**（出口网卡留空）；配置中 `rules` 为空时可用 `cli-netswitch.sh seed-defaults` 写入缺省规则。
 
 ### 3.2 默认值（字段可省略）
 
@@ -344,6 +344,7 @@ CLI 与 TUI 均触发同一探测逻辑（`detect.py`）。
 ```
 cli-netswitch.sh status                            # 显示状态
 cli-netswitch.sh detect [--write] [--dry-run]      # 重新探测网络并生成/刷新配置（默认只打印）
+cli-netswitch.sh seed-defaults                     # rules 为空时写入缺省规则
 cli-netswitch.sh iface up <name>                   # 开启网卡
 cli-netswitch.sh iface down <name> [--force]       # 关闭网卡
 cli-netswitch.sh metric set <name> <n>             # 设置 metric

@@ -41,6 +41,7 @@ else
   echo "    data/config/config.json 已存在，跳过复制"
 fi
 python3 -m netswitch.cli detect --write
+python3 -m netswitch.cli seed-defaults   # rules 为空时写入缺省规则（如 github）
 
 echo "==> [3/3] 高危操作前预检"
 bash scripts/preflight.sh || true

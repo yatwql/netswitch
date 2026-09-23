@@ -58,6 +58,7 @@
 - 规则落地到脚本与钩子：新增 `scripts/check-version.sh`（版本一致性）、`scripts/check-branch.sh`（分支策略）、`scripts/install-git-hooks.sh` 与 `scripts/git-hooks/{pre-commit,pre-push}`；`scripts/check.sh` 纳入版本一致性；`AGENTS.md` 明确提交门槛、版本/分支规则与钩子安装。
 - AGENTS.md 补充 GitHub 协作：分支模型（`dev` 默认/开发、`master` 发布/受保护）、PR 流程与分支保护设置步骤（含 `release.sh` 直推与「必须 PR」两种处理）。
 - TUI 状态栏：刷新时间增加时区（`yyyyMMdd HH:mm:ss +ZZZZ`），与标题栏版本/程序更新时间格式一致。
+- 缺省分流规则：`config.example.json` 自带一条 `github` 规则（出口网卡留空）；新增 `cli-netswitch.sh seed-defaults`（`rules` 为空时写入）与 `config.seed_default_rules()`；`install.sh` 自动调用，新装机不再“无规则”。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。

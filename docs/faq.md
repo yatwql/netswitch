@@ -43,8 +43,8 @@
 ```
 `table_id`/`fwmark` 不填会自动分配且保证唯一；`interface` 也可以后续在 TUI 里用 `e` 选择。
 
-**Q8：默认 `rules` 是空的？**
-是。默认配置**不写死任何规则**（github 仅作文档示例），按需自行添加。
+**Q8：默认有分流规则吗？**
+有。`config.example.json` 自带一条 **`github` 缺省规则**（分流 github.com 相关流量），**出口网卡留空**。新装机后：在 TUI 选中该规则按 `e` 选出口网卡即可。若配置里 `rules` 为空（如旧配置），运行 `scripts/cli-netswitch.sh seed-defaults` 写入缺省规则。
 
 ## 操作
 
