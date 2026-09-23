@@ -1,3 +1,5 @@
+import pytest
+
 from netswitch import routing
 from netswitch.model import CidrsCfg, RuleCfg
 
@@ -47,3 +49,22 @@ def test_rule_applied(monkeypatch):
     assert routing.rule_applied(rule) is True
     monkeypatch.setattr(routing.ex, "run", lambda cmd, **kw: _P(""))
     assert routing.rule_applied(rule) is False
+
+
+def test_run_or_hint_eopnotsupp(monkeypatch):
+    def boom(cmd, **kw):
+        raise routing.ex.ExecError(cmd, 2, "RTNETLINK answers: Operation not supported")
+
+    monkeypatch.setattr(routing.ex, "run", boom)
+    with pytest.raises(RuntimeError) as ei:
+        routing._run_or_hint(["ip", "route", "add", "x"])
+    assert "Operation not supported" in str(ei.value)
+
+
+def test_run_or_hint_other_error_passthrough(monkeypatch):
+    def boom(cmd, **kw):
+        raise routing.ex.ExecError(cmd, 2, "Nexthop has invalid gateway")
+
+    monkeypatch.setattr(routing.ex, "run", boom)
+    with pytest.raises(routing.ex.ExecError):
+        routing._run_or_hint(["ip", "route", "add", "x"])

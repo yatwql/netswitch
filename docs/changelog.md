@@ -59,6 +59,7 @@
 - AGENTS.md 补充 GitHub 协作：分支模型（`dev` 默认/开发、`master` 发布/受保护）、PR 流程与分支保护设置步骤（含 `release.sh` 直推与「必须 PR」两种处理）。
 - TUI 状态栏：刷新时间增加时区（`yyyyMMdd HH:mm:ss +ZZZZ`），与标题栏版本/程序更新时间格式一致。
 - 缺省分流规则：`config.example.json` 自带一条 `github` 规则（出口网卡留空）；新增 `cli-netswitch.sh seed-defaults`（`rules` 为空时写入）与 `config.seed_default_rules()`；`install.sh` 自动调用，新装机不再“无规则”。
+- 策略路由能力诊断：`preflight.sh` 新增「策略路由能力」项（探测自定义路由表 + `ip rule`）；`routing._run_or_hint()` 在 `RTNETLINK: Operation not supported` 时给出明确原因与提示（内核 `CONFIG_IP_MULTIPLE_TABLES` / 受限容器）；`faq.md` / `technical.md` 同步说明。
 
 ### Changed
 - 目录结构调整：Python 源码由 `src/` 改为 `src/python/`，测试代码定为 `src/test/`。

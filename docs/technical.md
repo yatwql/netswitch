@@ -431,10 +431,12 @@ WantedBy=multi-user.target
 | 依赖 | 用途 | 是否必需 |
 |------|------|----------|
 | `ip`（iproute2） | 路由/网卡操作 | 必需 |
+| 内核策略路由（`CONFIG_IP_MULTIPLE_TABLES`） | 自定义路由表 + `ip rule`（分流必需） | 必需（分流功能） |
 | `nft`（nftables） | 后端 A | 可选，缺省回退 iprule |
 | Python 3.9+（标准库） | 运行（json / curses / ipaddress） | 必需 |
 
 > 无第三方 Python 运行时依赖（不依赖 PyYAML、textual）。
+> 若内核未启用 `CONFIG_IP_MULTIPLE_TABLES`（或在受限容器/gVisor 中运行），`ip route ... table N` / `ip rule` 会报 `RTNETLINK answers: Operation not supported`，此时**无法分流**（可在 `preflight.sh` 的「策略路由能力」项确认）。
 
 ## 10. 错误处理
 

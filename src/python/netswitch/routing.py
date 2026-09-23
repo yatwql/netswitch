@@ -10,6 +10,20 @@ from .model import Config, RuleCfg
 _log = log.get_logger()
 
 
+def _run_or_hint(cmd, *, dry_run: bool = False) -> None:
+    """执行命令；若报 EOPNOTSUPP，给出“策略路由不受支持”的明确提示。"""
+    try:
+        ex.run(cmd, dry_run=dry_run)
+    except ex.ExecError as e:
+        if "Operation not supported" in (e.stderr or ""):
+            raise RuntimeError(
+                "策略路由不受支持（RTNETLINK: Operation not supported）。\n"
+                "可能原因：内核缺少 CONFIG_IP_MULTIPLE_TABLES，或运行在受限容器/网络命名空间中。\n"
+                "请用 scripts/preflight.sh 的「策略路由能力」项确认；该环境无法做流量分流。"
+            ) from e
+        raise
+
+
 def resolve_backend(pref: str) -> str:
     if pref in ("nftables", "iprule"):
         return pref
@@ -138,23 +152,23 @@ def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
         gw, src, subnet = _gw_src(config, r.interface)
         table = r.table_id
         # 独立路由表：默认走该网卡网关；补直连子网保证网关可达
-        ex.run(["ip", "route", "add", "default", "via", gw, "dev", r.interface,
-                "table", str(table)], dry_run=dry_run)
+        _run_or_hint(["ip", "route", "add", "default", "via", gw, "dev", r.interface,
+                      "table", str(table)], dry_run=dry_run)
         if src and subnet:
-            ex.run(["ip", "route", "add", subnet, "dev", r.interface,
-                    "proto", "kernel", "scope", "link", "src", src,
-                    "table", str(table)], dry_run=dry_run)
+            _run_or_hint(["ip", "route", "add", subnet, "dev", r.interface,
+                          "proto", "kernel", "scope", "link", "src", src,
+                          "table", str(table)], dry_run=dry_run)
 
         if backend == "nftables":
-            ex.run(["ip", "rule", "add", "fwmark", hex(r.fwmark), "lookup",
-                    str(table), "pref", str(ip.rule_pref(pref_counter))],
-                   dry_run=dry_run)
+            _run_or_hint(["ip", "rule", "add", "fwmark", hex(r.fwmark), "lookup",
+                          str(table), "pref", str(ip.rule_pref(pref_counter))],
+                         dry_run=dry_run)
             pref_counter += 1
         else:
             for c in rule_cidrs:
-                ex.run(["ip", "rule", "add", "to", c, "lookup", str(table),
-                        "pref", str(ip.rule_pref(pref_counter))],
-                       dry_run=dry_run)
+                _run_or_hint(["ip", "rule", "add", "to", c, "lookup", str(table),
+                              "pref", str(ip.rule_pref(pref_counter))],
+                             dry_run=dry_run)
                 pref_counter += 1
 
     if backend == "nftables" and active:
