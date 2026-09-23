@@ -207,7 +207,7 @@ class _App:
             r.interface for r in self.config.rules
             if r.interface and self.applied.get(r.name)
         }
-        self.last_refresh = time.strftime("%Y%m%d %H:%M:%S")
+        self.last_refresh = time.strftime("%Y%m%d %H:%M:%S %z")
 
     # ---------- 绘制 ----------
     def draw(self) -> None:
