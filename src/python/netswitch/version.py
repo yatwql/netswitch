@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -11,6 +12,7 @@ __version__ = "0.1-dev"
 _PKG_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _PKG_DIR.parents[2]          # src/python/netswitch -> 仓库根
 TZ_FMT = "%Y%m%d %H:%M:%S %z"             # yyyyMMdd HH:mm:ss +ZZZZ
+_VER_RE = re.compile(r"^(\d+)\.(\d+)(?:-dev)?$")
 
 
 @functools.lru_cache(maxsize=1)
@@ -44,3 +46,17 @@ def program_mtime_str(fmt: str = TZ_FMT) -> str:
 def info_line() -> str:
     """一行版本信息。"""
     return f"netswitch {__version__} · 程序更新 {program_mtime_str()}"
+
+
+def release_version(version: str = __version__) -> str:
+    """正式版本号（去掉 -dev）：0.1-dev -> 0.1。"""
+    m = _VER_RE.match(version)
+    return f"{m.group(1)}.{m.group(2)}" if m else version
+
+
+def next_dev_version(version: str = __version__) -> str:
+    """发布后的下一个开发版本（minor+1 并加 -dev）：0.1 / 0.1-dev -> 0.2-dev。"""
+    m = _VER_RE.match(version)
+    if not m:
+        return version
+    return f"{m.group(1)}.{int(m.group(2)) + 1}-dev"

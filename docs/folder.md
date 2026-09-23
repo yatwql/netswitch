@@ -80,6 +80,7 @@ switch/
 | 文件 | 简介 |
 |------|------|
 | `install.sh` | 一次性安装：装依赖 + 生成配置并自动探测 + 预检（可选 `--with-systemd`） |
+| `release.sh` | 发布正式版：dev→master（打 tag `vX.Y`），并自动把 dev 版本递增为 `X.(Y+1)-dev` |
 | `preflight.sh` | 高危操作前预检（只读，不改变系统状态） |
 | `check-docs.sh` | 文档一致性基础核对（提交门槛） |
 | `run-test.sh` | 运行测试（无需 root） |

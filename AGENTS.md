@@ -27,7 +27,9 @@
 ## 版本与分支
 
 - 版本号唯一来源：`src/python/netswitch/version.py` 的 `__version__`（当前 `0.1-dev`）。
-- 分支策略：日常开发在 **`dev`** 分支进行；仅在**发布正式版本**时才将 `dev` 合并到 `master`。
+- **版本约定**：正式版 `<major>.<minor>`（无后缀，如 `0.1`）；开发版 `<major>.<minor>-dev`（如 `0.2-dev`）。
+- **分支策略**：日常开发在 **`dev`** 分支进行；仅在**发布正式版本**时才将 `dev` 合并到 `master`。
+- **发布**：运行 `scripts/release.sh`（默认演练，`--yes` 执行）：把 dev 版本转为正式版并归档 changelog → 合并 `dev` 到 `master` 并打 tag `vX.Y` → **自动把 dev 版本递增为 `X.(Y+1)-dev`** 并推送。
 - 文档中的版本号须与 `version.py` 保持一致；程序（TUI/status/日志）会显示版本号与程序更新时间。
 
 ## 常用命令

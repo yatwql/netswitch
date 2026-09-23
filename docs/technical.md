@@ -76,6 +76,7 @@ switch/
 │       └── test_log.py
 ├── scripts/                           # shell 便捷入口，调用 src/python 的程序
 │   ├── install.sh            # 一次性安装（装依赖/生成配置/预检，可选 --with-systemd）
+│   ├── release.sh            # 发布正式版（dev→master，打 tag，自动递增 dev 版本）
 │   ├── preflight.sh           # 高危操作前预检（只读）
 │   ├── detect.sh              # 重新探测网络并生成配置（调用 CLI detect）
 │   ├── cli-netswitch.sh       # CLI 统一入口：调用 netswitch.cli

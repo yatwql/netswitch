@@ -13,3 +13,11 @@ def test_program_mtime_str_format():
 
 def test_info_line_contains_version():
     assert version.__version__ in version.info_line()
+
+
+def test_release_and_next_dev():
+    assert version.release_version("0.1-dev") == "0.1"
+    assert version.release_version("0.1") == "0.1"
+    assert version.next_dev_version("0.1-dev") == "0.2-dev"
+    assert version.next_dev_version("0.1") == "0.2-dev"
+    assert version.next_dev_version("0.10-dev") == "0.11-dev"
