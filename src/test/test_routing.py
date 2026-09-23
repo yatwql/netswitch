@@ -43,6 +43,30 @@ def test_apply_rules_mainroute_commands(monkeypatch):
     assert not any(c.startswith("nft") for c in cmds)
 
 
+def test_clear_rules_mainroute_skips_policy(monkeypatch):
+    from netswitch.model import CidrsCfg, Config, RoutingCfg, RuleCfg
+
+    calls = []
+    monkeypatch.setattr(routing.cidrs, "fetch_cidrs", lambda c: ["1.1.1.0/24"])
+    monkeypatch.setattr(routing.ex, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(routing.shutil, "which", lambda n: "/usr/sbin/nft")
+
+    def _no_rule_list(*a, **k):
+        raise AssertionError("mainroute 不应调用 ip rule")
+
+    monkeypatch.setattr(routing.ip, "rule_list", _no_rule_list)
+    cfg = Config(
+        routing=RoutingCfg(backend="mainroute"),
+        rules=[RuleCfg(name="r", interface="eth0",
+                       cidrs=CidrsCfg(source="manual", extra=["1.1.1.0/24"]))],
+    )
+    routing.clear_rules(cfg)
+    cmds = [" ".join(c) for c in calls]
+    assert "ip route del 1.1.1.0/24 table main" in cmds
+    assert not any(c.startswith("nft") for c in cmds)
+    assert not any(c.startswith("ip rule") for c in cmds)
+
+
 def test_build_nft_script(monkeypatch):
     monkeypatch.setattr(routing.cidrs, "fetch_cidrs", lambda c: ["140.82.112.0/20"])
     rule = RuleCfg(name="github", fwmark=1, cidrs=CidrsCfg())

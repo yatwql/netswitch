@@ -54,10 +54,13 @@ def run(
         raise
 
     if proc.returncode != 0:
-        _log.error("FAIL(%d): %s :: %s", proc.returncode, cmd_str(cmd),
-                   (proc.stderr or "").strip())
         if check:
+            _log.error("FAIL(%d): %s :: %s", proc.returncode, cmd_str(cmd),
+                       (proc.stderr or "").strip())
             raise ExecError(cmd, proc.returncode, proc.stderr)
+        # check=False：调用方允许失败（如删除不存在的路由/表），降为 DEBUG
+        _log.debug("IGNORED(%d): %s :: %s", proc.returncode, cmd_str(cmd),
+                   (proc.stderr or "").strip())
     else:
         _log.log(level, "OK: %s", cmd_str(cmd))
     return proc

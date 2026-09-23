@@ -131,8 +131,9 @@ def _build_nft_script(table: str, rules: List[RuleCfg]) -> str:
 
 
 def clear_rules(config: Config, *, dry_run: bool = False) -> None:
-    """清除本程序创建的全部策略路由产物（幂等）。"""
-    _log.info("clear_rules: 清除策略路由产物（dry_run=%s）", dry_run)
+    """清除本程序创建的分流产物（按后端，幂等）。"""
+    backend = resolve_backend(config.routing.backend)
+    _log.info("clear_rules: 清除分流产物（后端=%s，dry_run=%s）", backend, dry_run)
     tables = {r.table_id for r in config.rules}
 
     # mainroute：删除主表中本程序添加的明细路由
@@ -141,21 +142,24 @@ def clear_rules(config: Config, *, dry_run: bool = False) -> None:
             ex.run(["ip", "route", "del", c, "table", "main"],
                    dry_run=dry_run, check=False)
 
-    # nft 整表删除（仅当 nft 可用）
-    if shutil.which("nft"):
+    # nft 整表删除（仅 nftables 后端且 nft 可用）
+    if backend == "nftables" and shutil.which("nft"):
         ex.run(["nft", "delete", "table", "inet", config.routing.nft_table],
                dry_run=dry_run, check=False)
 
-    # 删除本程序的 ip rule（优先级 >= 20000 且 table 属于本程序）
-    for ru in ip.rule_list(dry_run=dry_run):
-        if ru.get("table") in tables and ru.get("priority", 0) >= ip.RULE_PREF_BASE:
-            ex.run(["ip", "rule", "del", "pref", str(ru["priority"])],
+    # ip rule / 独立路由表：仅在后端使用且内核支持时清理
+    # （不支持策略路由的内核连 `ip rule show` 都会 EOPNOTSUPP，必须避开）
+    if backend in ("nftables", "iprule") and ip.policy_routing_supported():
+        try:
+            for ru in ip.rule_list(dry_run=dry_run):
+                if ru.get("table") in tables and ru.get("priority", 0) >= ip.RULE_PREF_BASE:
+                    ex.run(["ip", "rule", "del", "pref", str(ru["priority"])],
+                           dry_run=dry_run, check=False)
+        except Exception:  # noqa: BLE001
+            pass
+        for t in tables:
+            ex.run(["ip", "route", "flush", "table", str(t)],
                    dry_run=dry_run, check=False)
-
-    # 清空独立路由表
-    for t in tables:
-        ex.run(["ip", "route", "flush", "table", str(t)],
-               dry_run=dry_run, check=False)
 
 
 def apply_rules(config: Config, *, only: Optional[Set[str]] = None,
