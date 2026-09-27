@@ -13,13 +13,27 @@ from . import exec as ex
 # 虚拟接口前缀/名称（排除）
 VIRTUAL_PREFIXES = (
     "lo", "veth", "br-", "docker", "lzc-", "virbr", "tun", "tap", "heiyu",
+    "wg", "ppp", "dummy", "macvlan", "macvtap", "tailscale", "zt", "nordlynx",
+    "vnet", "ifb", "nflog", "gre", "sit", "ip6tnl",
 )
 
 # 物理网卡常见命名前缀
 PHYSICAL_PREFIXES = ("en", "eth", "wl", "wlan", "ww")
 
-# 策略路由的 ip rule 优先级基准（需 < 32766）
+# 策略路由的 ip rule 优先级基准（需 < 32766，见 RULE_PREF_MAX_COUNT）
 RULE_PREF_BASE = 20000
+# 单次运行最多分配的 ip rule 优先级个数（保证 base + count < 32766）
+RULE_PREF_MAX_COUNT = 12000
+
+# 本程序允许使用的自定义路由表号区间。
+# 1..252 可用；253/254/255 是内核保留的 default/main/local，
+# 误用会导致 `ip route flush table 254` 清空主路由表。
+TABLE_ID_MIN = 200
+TABLE_ID_MAX = 252
+
+# mainroute 后端给主表明细路由打的 proto 标记（便于判定/清理）。
+# 注意：iproute2 只接受 1..255 的数值 proto，200 在合法范围内。
+MAINROUTE_PROTO = 200
 
 
 def _j(args: List[str]) -> List[str]:
@@ -47,12 +61,34 @@ def rule_list(dry_run: bool = False) -> List[Dict[str, Any]]:
     return json.loads(out or "[]")
 
 
+def has_device(name: str) -> bool:
+    """sysfs 中是否存在 `device` 链接：真实 PCI/USB 网卡才有。
+
+    比命名前缀可靠得多（VLAN 子接口、bond、bridge 等都没有）。
+    容器/受限环境中读不到 sysfs 时返回 False（调用方回退到命名前缀判断）。
+    """
+    try:
+        return os.path.exists(f"/sys/class/net/{name}/device")
+    except OSError:  # pragma: no cover - 极端路径长度等
+        return False
+
+
 def is_physical(name: str, link: Optional[Dict[str, Any]] = None) -> bool:
-    """判定是否为物理网卡。"""
-    if not name or name in VIRTUAL_PREFIXES:
+    """判定是否为物理网卡。
+
+    顺序：虚拟前缀/名称排除 → VLAN 子接口排除 → sysfs 确认为真实设备 →
+    命名前缀 → `link_type == ether` 且无 master/link-netns 兜底。
+    bond0 之类没有 `device` 链接的聚合设备会走兜底分支（仍视为可用出口），
+    但其 slave 因带 master 被排除。
+    """
+    if not name:
         return False
-    if name.startswith(VIRTUAL_PREFIXES):
+    if name in VIRTUAL_PREFIXES or name.startswith(VIRTUAL_PREFIXES):
         return False
+    if "." in name:            # enp2s0.100 等 VLAN / 别名子接口
+        return False
+    if has_device(name):
+        return True
     if name.startswith(PHYSICAL_PREFIXES):
         return True
     # 兜底：命名前缀不匹配但 link 类型为 ether 且无 master / link-netns
@@ -113,29 +149,30 @@ def admin_up(link: Dict[str, Any]) -> bool:
     return "UP" in (link.get("flags") or [])
 
 
-POLICY_TEST_TABLE = "12345"
-
-
 @functools.lru_cache(maxsize=1)
-def policy_routing_supported() -> bool:
-    """是否支持策略路由（自定义路由表 + ip rule）。
+def policy_routing_supported() -> Optional[bool]:
+    """策略路由（自定义路由表 + ip rule）是否可用。
 
-    需 root 才能探测（会临时增删一个测试条目）；非 root 时返回 True（不误判）。
-    不支持时典型报错：`RTNETLINK answers: Operation not supported`
-    （内核缺 CONFIG_IP_MULTIPLE_TABLES，或受限容器/gVisor）。
+    - True：可用；False：内核/环境不支持；None：无法判断（非 root）。
+    - **只读探测**：不支持多路由表的内核连 `ip rule show` 都会返回
+      `RTNETLINK answers: Operation not supported`（内核缺
+      CONFIG_IP_MULTIPLE_TABLES，或受限容器/gVisor）；探测不再增删路由，
+      因此 dry-run 也不会改动系统，并发运行也不会互相干扰。
+    - 非 root 时返回 None：调用方按“未知”处理（不据此做破坏性操作）。
     """
     if os.geteuid() != 0:
-        return True
+        return None
     try:
-        r = ex.run(["ip", "route", "add", "203.0.113.0/24", "dev", "lo",
-                    "table", POLICY_TEST_TABLE], check=False, readonly=True)
-        if r.returncode != 0:
-            return False
-        ex.run(["ip", "route", "del", "203.0.113.0/24", "dev", "lo",
-                "table", POLICY_TEST_TABLE], check=False, readonly=True)
-        return True
+        r = ex.run(["ip", "-j", "rule", "show"], check=False, readonly=True)
     except Exception:  # noqa: BLE001
+        return True
+    if r.returncode == 0:
+        return True
+    if "not supported" in (r.stderr or "").lower():
         return False
+    # 其它错误（权限、临时故障）保守视为支持：真正的写操作失败时
+    # routing._run_or_hint 会给出明确提示。
+    return True
 
 
 def nft_set_name(rule_name: str) -> str:
@@ -144,7 +181,15 @@ def nft_set_name(rule_name: str) -> str:
 
 
 def rule_pref(index: int) -> int:
-    """第 index 条规则/条目的 ip rule 优先级（唯一）。"""
+    """第 index 条规则/条目的 ip rule 优先级（唯一）。
+
+    超出 RULE_PREF_MAX_COUNT 会撞上内核默认规则（pref 32766），必须提前拒绝。
+    """
+    if not 0 <= index < RULE_PREF_MAX_COUNT:
+        raise ValueError(
+            f"ip rule 数量超出上限（{RULE_PREF_MAX_COUNT} 条）："
+            f"请减少规则/CIDR 数量，或改用 nftables 后端"
+        )
     return RULE_PREF_BASE + index
 
 
