@@ -28,17 +28,21 @@ def print_status(config: Config) -> None:
     print(f"日志: {log_file or '(不可写，已禁用)'}")
     if ip.policy_routing_supported() is None:
         print("提示: 非 root，策略路由能力未确认（实际以 root 运行 apply 时为准）")
+    if not ip.family_available(6):
+        print("IPv6: 不可用（内核未启用或不支持）—— 声明 v6 的分流会被跳过")
 
     print("== 物理网卡 ==")
     inferred = False
     for i in interfaces:
         ssid = f" SSID={i.ssid or '-'}" if i.type == "wireless" else ""
+        v6 = (f"  IPv6={i.ip6 or '-'} 网关6={i.gateway6 or '-'}"
+              if (i.ip6 or i.gateway6) else "")
         mark = "" if i.device_confirmed else "*"
         inferred = inferred or not i.device_confirmed
         print(f"  {i.name:<12}{mark} {('无线' if i.type == 'wireless' else '有线'):<4} "
               f"状态={state_label(i.state):<5} IP={i.ip or '-':<18} "
               f"metric={i.metric if i.metric is not None else '-'} "
-              f"网关={i.gateway or '-'}{ssid}")
+              f"网关={i.gateway or '-'}{v6}{ssid}")
     if inferred:
         print("  * 无 sysfs device 节点（容器/受限环境，或 bond 等聚合设备）：按命名推断为物理网卡")
 
@@ -51,7 +55,7 @@ def print_status(config: Config) -> None:
     print(f"\n== 分流规则（后端: {routing.backend_note(backend)}）==")
     if not config.rules:
         print("  （无）")
-    main_routes = routing.main_table_routes() if backend == "mainroute" else None
+    main_routes = routing.main_table_routes_all() if backend == "mainroute" else None
     for r in config.rules:
         try:
             applied = routing.rule_applied(config, r, main_routes=main_routes)
@@ -63,4 +67,5 @@ def print_status(config: Config) -> None:
         else:
             mark = "已应用" if applied else "未应用"
         iface = r.interface or "-"
-        print(f"  {r.name:<12} 出口={iface:<12} 状态={mark}")
+        fams = "+".join(f"v{f}" for f in routing.rule_families(config, r))
+        print(f"  {r.name:<12} 出口={iface:<12} 族={fams:<5} 状态={mark}")

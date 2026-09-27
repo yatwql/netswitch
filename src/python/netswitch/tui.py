@@ -246,7 +246,7 @@ class _App:
         if self.sel not in items:
             self.sel = items[0] if items else None
         backend = routing.resolve_backend(self.config.routing.backend)
-        main_routes = routing.main_table_routes() if backend == "mainroute" else None
+        main_routes = routing.main_table_routes_all() if backend == "mainroute" else None
         self.applied = {}
         for r in self.config.rules:
             try:
@@ -292,9 +292,10 @@ class _App:
                 state = "未有连接"
             metric = i.metric if i.metric is not None else "-"
             ssid = f"  SSID={i.ssid or '-'}" if i.type == "wireless" else ""
+            v6 = f"  6={i.ip6 or '-'}" if i.ip6 else ""
             tag = "[主网卡]" if i.name == self.primary else ""
             line = (f"  [{idx}] {i.name:<12} {kind}  {state}  "
-                    f"IP={i.ip or '-'}  metric={metric}  网关={i.gateway or '-'}{ssid}  {tag}")
+                    f"IP={i.ip or '-'}{v6}  metric={metric}  网关={i.gateway or '-'}{ssid}  {tag}")
             # 颜色：分流生效网卡黄 / 被禁止或不可用红 / 主网卡绿 / 其他网卡蓝
             if i.name in self.active_egress:
                 attr = self._cp(4)
@@ -319,8 +320,10 @@ class _App:
             sel = self.sel == ("rule", r.name)
             base = curses.A_REVERSE if sel else 0
             is_applied = bool(self.applied.get(r.name))
+            fams = routing.rule_families(self.config, r)
+            fam_tag = (" (" + "+".join(f"v{f}" for f in fams) + ")") if 6 in fams else ""
             if r.interface:
-                eff = f"生效网卡: {r.interface}"
+                eff = f"生效网卡: {r.interface}{fam_tag}"
                 eff_attr = (self._cp(4) if is_applied else 0) | base
             else:
                 eff = "生效网卡: 未分流"
