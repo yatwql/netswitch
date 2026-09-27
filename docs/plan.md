@@ -73,6 +73,12 @@
 - [x] 降级策略（无 v6 网关 / 未启用 IPv6 / 无 v6 策略路由 → 告警跳过 v6，v4 不受影响）
 - [x] status/TUI 展示 v6 地址、网关与规则地址族；netns 集成用例（I-12/I-13）
 
+### M8 — 配置驱动的规则增删 + 域名（已完成，FR11）
+- [x] `cidrs`：输入分类（IP/CIDR/域名/URL/通配符）、域名解析（A+AAAA）、DNS 通配符探测、分段缓存 v2
+- [x] `config`：`add_rule` / `remove_rule` / `next_rule_name`（只写文件、写后重校验、失败回滚）
+- [x] CLI `rule add` / `rule remove`（不需 root、不触碰网络）与 TUI 菜单 `n` / `x`
+- [x] 文档明确“只写配置 vs 立即生效”的边界与通配符局限（FAQ Q27~Q29、user-manuals §3.4）
+
 ### M5 — 文档与验收
 - [x] 更新 changelog / review-findings
 - [x] 校验 docs/ 全部文档与实现一致（含 user-manuals / readme 索引）
@@ -92,6 +98,6 @@
 
 ## 5. 当前状态
 
-- 阶段：M1~M4、M6、M7 完成；M5 文档已同步，剩「目标机验收」。
-- 测试：**218 个用例通过**（`scripts/run-test.sh`），含 5 个 netns 集成用例（`unshare -rn`，无需 root）。
+- 阶段：M1~M4、M6~M8 完成；M5 文档已同步，剩「目标机验收」。
+- 测试：**266 个用例通过**（`scripts/run-test.sh`），含 5 个 netns 集成用例（`unshare -rn`，无需 root）。
 - 下一步：在目标机上跑 `preflight.sh` → `detect --write` → `apply --dry-run` → 真实验收；补充容器转发/NAT 的 netns 用例（I-05~I-07）与 v6 真机验收。

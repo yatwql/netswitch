@@ -119,7 +119,7 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 ## IPv6（双栈）
 
 **Q25：为什么 IPv6 流量没走指定网卡？**
-本程序默认**只分流 IPv4**（`routing.ip_versions` 默认 `["v4"]`，为了不改变升级前的行为）。开启方式与限制见 [user-manuals.md](user-manuals.md)（§3.4 开启 IPv6 分流）。常见原因：
+本程序默认**只分流 IPv4**（`routing.ip_versions` 默认 `["v4"]`，为了不改变升级前的行为）。开启方式与限制见 [user-manuals.md](user-manuals.md)（§3.5 开启 IPv6 分流）。常见原因：
 - **没开双栈**：配置里加 `"routing": { "ip_versions": ["v4", "v6"] }` 后重新 `apply`；
 - 出口网卡没有 v6 默认路由（`ip -6 route show default`），或只有 `fe80::` 链路本地地址（不能作为分流源地址）；
 - 内核缺 `CONFIG_IPV6_MULTIPLE_TABLES`（仅 nftables/iprule 后端需要；`mainroute` 后端不需要）；
@@ -129,3 +129,24 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 
 **Q26：能不能只让某一条规则走 IPv6？**
 可以。在该规则的 `cidrs` 里加 `"ip_versions": ["v6"]`（或 `["v4","v6"]`），它会覆盖全局 `routing.ip_versions`。若该规则只声明 `v6` 而环境没有 v6，这条规则会被整体跳过并告警，其它规则不受影响。
+
+## 规则的新增/删除与域名
+
+**Q27：在菜单里加了规则，为什么没生效？**
+这是**有意设计**：TUI 的 `n`（新增）/ `x`（删除）与 CLI 的 `rule add` / `rule remove` **只写配置文件**，不改路由、不动网卡。要让它们作用到物理网卡，需要再执行一次：
+
+- TUI：`a`（应用全部），或在选中该规则后按 `p`（应用）；
+- CLI：`sudo scripts/cli-netswitch.sh apply`。
+
+这样做的原因：先攒好配置、检查无误再一次性实施，避免边输入边改路由。反过来说，`e`（选出口）、`c`（撤销分流）、`p`、`a`、`r` 这些操作会**立即作用到网络**。
+
+**Q28：`*.github.com` 能覆盖 github.com 的所有子域吗？**
+**不能**。域名规则的工作方式是：在 **apply 时**把域名解析成 IP（A/AAAA），再按网段分流；而 DNS 没有“枚举某域下所有子域”的接口，所以：
+
+- `*.github.com` 会解析 apex（`github.com`）本身，并做一次 **DNS 通配符探测**（对随机子域查询）。只有该域真的配置了 `*` 记录，才会额外拿到地址；
+- 想精确覆盖就**把子域写出来**：`rule add '*.github.com' api.github.com gist.github.com codeload.github.com`；
+- 解析结果有 TTL 缓存（默认 24h，`cidrs.ttl_hours` 可调），DNS 解析失败时会回退缓存并告警；
+- 想彻底“跟随真实解析结果”需要 DNS 代理（dnsmasq/unbound + nftset）方案，本项目未采用（见 `docs/review-findings.md` 备选方案）。
+
+**Q29：域名规则会不会拖慢 apply？**
+会有一点点：每条规则每个未过期的域名会做一次 DNS 查询（`*.` 通配符多一次探测查询）。上限是每条规则 64 个域名；结果缓存内不再查询。若不想让程序发探测查询，可设 `"wildcard_probe": false`。

@@ -48,27 +48,27 @@ switch/
 | `exec.py` | 命令执行封装：root 检查、dry-run、`ExecError` 统一错误 |
 | `log.py` | 运行日志：首选 `logs/netswitch.log`（按大小轮转），不可写时自动回退到用户可写目录 |
 | `model.py` | 数据模型：`Interface`（含 `ip6`/`gateway6`）/`IfaceCfg`/`RuleCfg`/`CidrsCfg`（含 `ip_versions`）/`Config`/`MetricsCfg`/`RoutingCfg` dataclass |
-| `config.py` | JSON 配置加载、默认值填充、探测填充、**白名单校验**（标识符/表号/fwmark/路径）、`interfaces` 写回 |
+| `config.py` | JSON 配置加载、默认值填充、探测填充、**白名单校验**（标识符/表号/fwmark/路径/地址族/域名）、**规则新增与删除（只写文件，写后重校验、失败回滚）**、`interfaces` 写回 |
 | `detect.py` | 网络自动探测：物理网卡识别（sysfs 优先）、有线/无线、连接状态、IPv4/IPv6 地址与网关 |
 | `ip.py` | `ip -j` 命令解析与命令构造、物理网卡/连接状态判定、只读能力探测（含地址族）、表号/proto/pref 常量 |
 | `iface.py` | 网卡开关（最后网卡保护）与 metric 调整（set/primary；先清全部默认路由再建） |
-| `cidrs.py` | 通用 CIDR 来源：URL+JSON 字段拉取（体量上限）、缓存、extra 合并、规范化与非法项告警（IPv4 + IPv6） |
+| `cidrs.py` | 通用 CIDR 来源：URL+JSON 字段拉取（体量上限）、**域名/通配符解析**、分段缓存、extra 合并、规范化与非法项告警（IPv4 + IPv6） |
 | `routing.py` | 分流规则策略路由：nftables/iprule/mainroute 三后端、v4/v6 双栈、预检→重建→失败回滚、按签名安全清理 |
 | `status.py` | 状态汇总与展示（网卡/默认路由/规则） |
 | `apply.py` | apply/revert 编排、state.json 记录与恢复 |
-| `cli.py` | argparse 命令行入口（status/detect/iface/metric/rule/apply/revert/install-systemd） |
-| `tui.py` | curses TUI（网卡区/规则区/快捷键/底部输入） |
+| `cli.py` | argparse 命令行入口（status/detect/iface/metric/rule apply·clear·add·remove/apply/revert/install-systemd） |
+| `tui.py` | curses TUI（网卡区/规则区/快捷键/底部输入）；`n`/`x` 新增删除规则（只写配置） |
 
 ## 4. src/test/ —— 测试
 
 | 文件 | 简介 |
 |------|------|
 | `conftest.py` | 把 `src/python` 加入 `sys.path`，便于 import netswitch |
-| `test_config.py` | 配置加载/默认值/唯一性校验/冲突校验/规则网卡写回 |
+| `test_config.py` | 配置加载/默认值/唯一性校验/冲突校验/规则网卡写回/**规则新增删除与写入回滚**/域名与地址族校验 |
 | `test_detect.py` | 主网卡判定、v4/v6 地址与网关探测、链路本地地址处理、配置片段生成 |
 | `test_ip.py` | 物理网卡识别、subnet、nft-set 命名、连接状态判定 |
 | `test_iface.py` | metric 命令构造、最后网卡保护、up/down |
-| `test_cidrs.py` | manual/url 来源、缓存回退、IPv4 过滤 |
+| `test_cidrs.py` | manual/url 来源、缓存回退、IPv4/IPv6 规范化、**域名解析与通配符探测**、输入分类、分段缓存 |
 | `test_routing.py` | 后端解析、nft 脚本生成、预检/回滚、**清理只删自己的产物**、ip rule/pref 边界 |
 | `test_apply.py` | 默认路由快照、state.json 读写、二次 apply 不覆盖基线、revert 恢复与清理 |
 | `test_tui.py` | 字母键归一化、游标移动、长文本折行 |

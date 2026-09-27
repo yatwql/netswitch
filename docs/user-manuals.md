@@ -133,7 +133,7 @@ cp data/config/config.example.json data/config/config.json
 | `interfaces[].metric` | 希望设定的 metric；缺省不调整 |
 | `metrics.preferred` / `fallback` | `metric primary` 用：主网卡 / 其余网卡的值（默认 100 / 600） |
 | `routing.backend` | 分流后端：`auto` / `nftables` / `iprule` / `mainroute`（`auto` 在不支持策略路由时自动回退 `mainroute`） |
-| `routing.ip_versions` | 参与分流的地址族，默认 `["v4"]`；双栈写 `["v4","v6"]`（详见 §3.4 与场景 H） |
+| `routing.ip_versions` | 参与分流的地址族，默认 `["v4"]`；双栈写 `["v4","v6"]`（详见 §3.5 与场景 H） |
 | `routing.nft_table` | nft 表名（默认 `netswitch`） |
 | `rules[].name` | 规则唯一名（任意，如 `github`） |
 | `rules[].enabled` | 是否启用（默认 `true`） |
@@ -148,7 +148,40 @@ cp data/config/config.example.json data/config/config.json
 
 在 `rules` 下复制一段，改 `name` / `url` / `fields` / `interface` 即可（`table_id`/`fwmark` 不填会自动避让），**无需改程序**。也可以先只写 `name`，稍后在 TUI 里用 `e` 选择生效网卡。
 
-### 3.4 开启 IPv6 分流
+> 不想手写 JSON、或者只想用域名/通配符？直接用 §3.4 的菜单/命令新增（只写配置），下一个 apply 就会生效。
+
+### 3.4 在菜单里新增/删除分流规则（只改配置）
+
+TUI 选中区或全局均可操作（写配置不需 root，但 `config.json` 若是 root 所有则需 sudo 运行）：
+
+```
+n  新增规则：输入 1.2.3.4 / 10.0.0.0/8 / example.com / *.github.com（可多个，空格或逗号分隔）
+    → 写入 config.json（新规则名 custom-1、custom-2…），**不会立即生效**
+    → 选中该规则按 e 选出口，或执行 apply / 按 a 才作用到网卡
+x  删除规则：从列表选序号 → 仅从 config.json 移除；已生效的部分等下次 apply 清理
+```
+
+CLI 等价操作（同样只写配置）：
+
+```bash
+scripts/cli-netswitch.sh rule add 10.0.0.0/8 1.2.3.4 '*.github.com'   # 自动命名 custom-N
+scripts/cli-netswitch.sh rule add api.github.com --name gh-api --interface wlp129s0
+scripts/cli-netswitch.sh rule add example.com --dry-run                # 只看计划不写文件
+scripts/cli-netswitch.sh rule remove gh-api
+scripts/cli-netswitch.sh apply                                       # 真正实施到物理网卡
+```
+
+**域名与通配符说明**（重要）：
+
+- 域名在**执行 apply 时**才解析为 IP（A + AAAA），结果缓存 `ttl_hours`；解析失败会告警并回退缓存。
+- `example.com` → 解析该域本身的地址；
+- `*.example.com` → 解析 apex，并做一次 **DNS 通配符探测**（相当于“这个域是否配了 `*` 记录”）；
+  **通配符 ≠ 所有子域**——DNS 没有枚举子域的接口。要精确覆盖，请把具体子域也写上：
+  `rule add '*.github.com' api.github.com gist.github.com`；
+- 若不想发探测查询，可在配置里设 `"wildcard_probe": false`；
+- 直接粘贴 URL 也行（自动取主机名）：`rule add https://github.com/org/repo`。
+
+### 3.5 开启 IPv6 分流
 
 1. 确认出口网卡有 IPv6：`ip -6 addr show <网卡>`、`ip -6 route show default`（网关常见为 `fe80::1`）。
 2. 在配置里开启地址族：
@@ -180,7 +213,9 @@ cp data/config/config.example.json data/config/config.json
 | `metric set <name> <n>` | 设置 metric（越小越优先；`<n>` **必填**） |
 | `metric primary <name>` | 设为主网卡 |
 | `rule apply <rule> [--interface <iface>]` | 按配置重建全部分流规则（声明式；`<rule>` 仅用于确认提示，可临时改出口） |
-| `rule clear <rule>` | 撤销某条分流规则（**写回配置**） |
+| `rule clear <rule>` | 撤销某条分流规则（**写回配置**并立即生效） |
+| `rule add <目标...> [--name N] [--interface <网卡>]` | **新增规则**（IP/CIDR/域名，支持 `*.example.com`）：**只写配置**，apply 后生效 |
+| `rule remove <规则名>` | **删除规则**：**只写配置**，apply 后清理其分流产物 |
 | `apply [--force]` | 按配置应用全部（metric + 规则） |
 | `revert` | 撤销全部改动（恢复原始默认路由） |
 | `install-systemd` | 安装并启用开机自恢复服务 |
@@ -195,7 +230,8 @@ cp data/config/config.example.json data/config/config.json
 | `1`…`N` / `g` | 数字选网卡 / `g` 切换规则 |
 | `Enter` | 网卡 → **设为主网卡**；规则 → 仅提示 |
 | `o` / `m` / `t` | 开关网卡 / 设为主网卡 / 改 metric |
-| `e` / `p` / `c` | 规则：选生效网卡 / 应用 / 撤销（`e`/`c` 均写回配置） |
+| `e` / `p` / `c` | 规则：选生效网卡（写回配置并立即生效）/ 应用 / 撤销（`e`/`c` 均写回配置） |
+| `n` / `x` | **新增规则**（输入 IP/CIDR/域名，支持 `*.example.com`）/ **删除规则**：只写配置，apply 后生效 |
 | `d` / `a` / `r` | 重新探测 / 应用全部 / 撤销全部 |
 | `f` / `F5` | 刷新 |
 | `Esc` | 返回主页面并刷新（输入框中取消当前输入） |

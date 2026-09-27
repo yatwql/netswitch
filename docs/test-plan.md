@@ -26,7 +26,7 @@
 - 单元/命令构造：普通用户即可，无需 root。
 - 集成：`unshare -rn`（非特权 user namespace）+ `iproute2`；用 `pytest.mark.integration` 标记，环境不支持时自动 skip。
 - 依赖注入：monkeypatch 替换 `iproute2` 查询与命令执行器，断言命令序列、校验副作用边界。
-- 当前规模：**218 个用例通过**（含 5 个 netns 集成用例），全部无需 root。
+- 当前规模：**266 个用例通过**（含 5 个 netns 集成用例），全部无需 root。
 
 ## 4. 测试用例清单
 
@@ -200,6 +200,27 @@
 | T-status-04 | P1 | 双栈展示 | 网卡行含 `IPv6=`/`网关6=`，规则行含 `族=v4+v6`；系统无 v6 时提示“IPv6: 不可用” |
 | T-log-01 | P0 | 首选目录不可写 | 自动回退到用户可写目录并在 stderr 提示 |
 | T-log-02 | P1 | 启动行 | 含版本、主机名、发起用户 |
+
+### 4.12 域名与规则增删（FR11）
+
+| 编号 | 优先级 | 用例 | 预期 |
+|------|--------|------|------|
+| T-domain-01 | P0 | 输入分类 | IP→`/32`、CIDR→归一化、域名→小写、URL→取主机名 |
+| T-domain-02 | P0 | 非法输入 | `10.0.0.0/99`、`*.`、`a.*.com`、空 → 报错（不静默丢弃） |
+| T-domain-03 | P0 | 精确域名解析 | A + AAAA → `/32`、`/128` |
+| T-domain-04 | P0 | `*.example.com` | apex + DNS 通配符探测（命中/未命中）；`wildcard_probe: false` 时不发探测查询 |
+| T-domain-05 | P0 | 解析失败 | 告警；有缓存时回退缓存 |
+| T-domain-06 | P0 | 域名缓存 | 命中缓存不再查询 DNS；域名列表变化 → 重解析；旧缓存结构仍可读 |
+| T-domain-07 | P0 | 域名规则端到端 | apply 时解析并按地址族分流（v4+v6） |
+| T-domain-08 | P0 | 域名数量上限 | 超过 64 条报错 |
+| T-config-21 | P0 | `add_rule` | 写入后能被 load 读回；网段/域名规范化；未指定出口则 interface 为空 |
+| T-config-22 | P0 | `add_rule` 校验 | 重名/非法规则名/非法网段/非法出口/非法地址族 → 报错，不写文件 |
+| T-config-23 | P0 | `remove_rule` | 删除命中/未命中；配置里不再包含该规则 |
+| T-config-24 | P0 | 写入后校验失败 | 文件回滚为原文（配置本身已非法时也不会被改得更坏） |
+| T-config-25 | P1 | `next_rule_name` | `custom-1`、`custom-2`…自动避让 |
+| T-cli-11 | P0 | `rule add` | **不要求 root**、**不调用 apply_rules**，只写配置；`--name`/`--interface` 生效 |
+| T-cli-12 | P0 | `rule add --dry-run` | 不写文件，只打印计划 |
+| T-cli-13 | P0 | `rule remove` | 只写配置；未知规则名退出码 1；`--dry-run` 不写文件 |
 
 ## 5. 集成测试（netns 隔离）
 

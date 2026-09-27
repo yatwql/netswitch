@@ -156,6 +156,9 @@ switch/
 | `rule.enabled` | true | |
 | `rule.interface` | 无（必填） | 空 = 该规则不生效 |
 | `rule.cidrs.source` | url | |
+| `rule.cidrs.extra` | 无 | 字面 IP/CIDR（交互新增时写入） |
+| `rule.cidrs.domains` | 无 | 域名/通配符（如 `example.com`、`*.github.com`）：**apply 时解析**（最多 64 条） |
+| `rule.cidrs.wildcard_probe` | true | 对 `*.example.com` 是否做 DNS 通配符探测（随机子域查询） |
 | `rule.cidrs.ip_versions` | 无（跟随 `routing.ip_versions`） | 规则级地址族覆盖 |
 | `rule.cidrs.ttl_hours` | 24 | |
 | `rule.cidrs.cache_file` | `data/config/cache-<规则名>.json` | 内部自动（必须位于数据目录内） |
@@ -176,6 +179,8 @@ switch/
 | `rules[].table_id` | 200..252 | 253/254/255 是内核保留的 default/main/local，误用会 `flush` 主表 |
 | `rules[].fwmark` | 1..0xFFFFFFFF | 0 无法用于打标 |
 | `rules[].cidrs.source` | `url` / `manual` | 未知来源直接报错 |
+| `rules[].cidrs.domains` | 每条规则 ≤ 64 条；每段只允许字母/数字/-/_；`*.` 只能在最左侧；不得写 IP | 会参与 DNS 查询与写入 |
+| `rules[].cidrs.wildcard_probe` | 布尔 | 控制是否发探测查询 |
 | `routing.ip_versions` / `cidrs.ip_versions` | 只允许 `v4`/`v6`，非空且不重复 | 地址族白名单 |
 | `interfaces[].gateway` / `gateway6` | 必须是 IPv4 / IPv6 地址（`gateway6` 允许 `fe80::1%eth0` 带 zone） | 避免把域名或错位的族写进 `ip route ... via` |
 | `state_file` / `cache_file` | 解析后必须位于数据目录（默认 `<仓库>/data`）内 | 这些路径由 root 写入，防越权写文件（可用 `NETSWITCH_DATA_DIR` 覆盖数据目录） |
@@ -420,6 +425,57 @@ CLI 与 TUI 均触发同一探测逻辑（`detect.py`）。`detect` 输出中的
 **清理**：`main_table_routes(family)` 分别读两族主表，只删 `proto 200` + 出口网卡匹配的条目（`ip -6 route del ... proto 200 ...`）；`ip rule` 与派生路由表按 `pref ∈ [20000,32000)` + 派生表号逐族清理（`ip -6 rule del` / `ip -6 route flush table N`）。因是两套独立规则库，优先缀计数器在两族间共用以简化实现，但“上限校验”按族分别计算。
 
 **已知局限**：v6 分流同样只能按网段匹配（不做域名）；上游给 IPv6 记录时可能同时给 v4，两者可独立开关；若只有链路本地地址（无全局 v6 地址），则不参与分流（不能作为源地址）。
+
+### 4.9 域名规则（FR11）
+
+为降低使用门槛，新增/删除规则可以直接用域名（不必自己查网段）。
+
+**为什么不在配置时解析**：域名对应的 IP 会变（CDN、滚动发布），在 **apply 时**解析才能拿到当下的地址；
+配置里保留的是**域名本身**（可读、可改、可审阅），解析结果只进缓存。
+
+**输入分类**（`cidrs.classify_target` / `parse_targets`）：
+
+| 输入 | 归类 | 结果 |
+|------|------|------|
+| `1.2.3.4` / `2001:db8::1` | CIDR | 主机路由 `/32` / `/128` |
+| `10.0.0.0/8` / `2001:db8::/32` | CIDR | 归一化后原样 |
+| `example.com` / `*.github.com` | 域名 | 校验并转小写 |
+| `https://github.com/org/repo` | 域名 | 提取主机名 `github.com` |
+
+无法识别的项**直接报错**（交互场景不静默丢弃）；单条规则最多 64 个域名。
+
+**解析（`cidrs.resolve_domains`）**：`socket.getaddrinfo` 取 A + AAAA → 主机 CIDR；
+`*.example.com` = 解析 apex + （`wildcard_probe` 开启时）对随机标签 `netswitch-wildcard-probe-<随机>.example.com` 发一次查询，
+只有该域真的配置了 DNS 通配符记录才会返回地址。
+
+> **重要局限**：DNS 没有“枚举子域”的接口，所以 `*.github.com` **不等于** github.com 的所有子域。
+> 需要精确覆盖时，把具体子域（`api.github.com`、`gist.github.com` …）一并写进 `domains`。
+> 想“动态跟随真实解析结果”需要 DNS 代理/nftset 类方案（已在 review-findings 记录为备选，未采用）。
+
+**缓存（`cache-<规则名>.json` 结构 v2）**：
+
+```json
+{
+  "fetched_at": 0, "url_cidrs": [],
+  "domains_at": 0, "domain_patterns": ["*.github.com"], "domain_cidrs": ["140.82.112.0/20"],
+  "cidrs": ["140.82.112.0/20"]
+}
+```
+
+- URL 与域名两部分各有时间戳、各自复用 `cidrs.ttl_hours`；
+- 域名列表变了（增删/改名）会强制重新解析；
+- DNS 失败时回退 `domain_cidrs` 并告警；旧版缓存（只有 `fetched_at` + `cidrs`）仍能作为 URL 部分使用。
+
+**写入路径（`config.add_rule` / `remove_rule`）**：
+
+- 两个函数**只改配置文件**，不调用任何网络命令；写入前校验（规则名/网段/域名/出口网卡/地址族），
+  写后用 `config.load()` 重新校验，**失败则回滚文件原文**（不让 `apply` 读到坏配置）；
+- 不写 `table_id`/`fwmark`/`cache_file`：这些仍由加载时自动派生（保持“派生项内部自动”的设计）；
+  因此删掉中间一条规则后其余规则的派生表号会前移，`apply` 时靠签名扫描清理旧表（§4.3.1）；
+- TUI/CLI 两侧共用同一套函数，保证行为一致（FR5）。
+
+**界面与命令**：TUI `n`（新增）/ `x`（删除）均**只写配置**；CLI `rule add` / `rule remove` 同理。
+与之相对，`e`（选出口）/`c`（撤销分流）/`p`（应用）/`a`（应用全部）/`r`（撤销全部）会真正作用到网络。
 
 ## 5. 安全与健壮性
 

@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### Added（配置驱动的规则增删 + 域名/通配符，FR11）
+- TUI 新增菜单项 `n`（新增规则）/ `x`（删除规则）；CLI 新增 `rule add` / `rule remove`（含 `--name` / `--interface` / `--dry-run`）。
+- **只写配置，不触碰网络**：新增的规则在下一次 `apply` 才生效；删除只从配置移除，已生效的分流产物等下次 `apply` 按签名清理。
+  对比：`e`（选出口）/`c`（撤销分流）/`p`/`a`/`r` 仍会立即作用到网络（已在文档/TUI 帮助与提示中明确区分）。
+- 输入支持 IP、CIDR、域名、通配符域名（`*.example.com`）与直接粘贴 URL（自动取主机名）；
+  可一次输入多个（逗号/空格/分号分隔），无法识别的项直接报错（不静默丢弃）。
+- **域名在 apply 时解析**（A + AAAA → `/32`/`/128`），结果带 TTL 缓存与失败回退；
+  `*.example.com` = apex + DNS 通配符探测（随机子域查询，可用 `cidrs.wildcard_probe: false` 关闭）；
+  文档明确“通配符 ≠ 所有子域”，需精确覆盖时显式列出子域。
+- 缓存结构升级为 v2（`url_cidrs` / `domain_patterns` / `domain_cidrs` 分段 + 各自时间戳，
+  域名列表变更会强制重解析）；旧缓存仍可作为 URL 部分回退使用。
+- 配置写入安全化：`config.add_rule` / `remove_rule` / `next_rule_name`（自动命名 `custom-N`）；
+  写入前校验（规则名/网段/域名/出口网卡/地址族），写后用 `config.load()` 重新校验，**失败回滚文件原文**。
+- 规则与域名上限：每条规则最多 64 个域名（防呆），网段/域名超出或写法非法一律拒绝。
+
 ### Added（IPv6 双栈分流，FR10）
 - 分流规则支持 **IPv6**：`cidrs` 来源（URL / `extra`）现在同时保留 v4 与 v6（`cidrs._finish` 不再丢弃 v6，并统一规范化）。
 - 新增 `routing.ip_versions`（默认 `["v4"]`，**向后兼容**）与规则级覆盖 `rules[].cidrs.ip_versions`（可为单条规则开/关某个族）。
@@ -37,7 +52,7 @@
 - **CI 升级**：Python 3.9/3.11/3.13 矩阵上直接跑 `scripts/check.sh`（补上此前遗漏的版本一致性核对），并新增 shell 语法检查（`bash -n`）、`compileall` 与 `pyproject.toml` 解析。
 - **文档门禁自动化**：`check-docs.sh` 新增「`folder.md` 必须覆盖 src/scripts/data/config 与工程文件」与「改动了 `src/`/`scripts/` 就必须同步 `docs/changelog.md`」两项检查（AGENTS.md 的人工要求变成机器门禁）。
 - **新增 `pyproject.toml`**：包元数据、`netswitch`/`netswitch-tui` 入口点与 dev 依赖；版本仍以 `version.py` 为唯一来源。⚠️ 仅做了 TOML 解析与元数据校验（CI 与本次改动环境均未安装 setuptools，未实际构建/安装验证）；`install-systemd`、`data/config/*` 仍按“仓库内运行”假定，打包安装后的 systemd 集成不在支持范围。
-- **测试**：新增 netns 集成测试（`src/test/test_integration_netns.py`，用 `unshare -rn`，**无需 root**，环境不支持自动 skip）与 `test_status.py`；重写 `test_routing`/`test_config`/`test_apply`/`test_iface`/`test_ip`/`test_cidrs`/`test_cli`/`test_log`/`test_tui`/`test_detect`。用例数 44 → **218**（含 5 个 netns 集成用例：v4/v6 清理安全、apply→clear 闭环、dry-run 不改系统）。
+- **测试**：新增 netns 集成测试（`src/test/test_integration_netns.py`，用 `unshare -rn`，**无需 root**，环境不支持自动 skip）与 `test_status.py`；重写 `test_routing`/`test_config`/`test_apply`/`test_iface`/`test_ip`/`test_cidrs`/`test_cli`/`test_log`/`test_tui`/`test_detect`。用例数 44 → **266**（含 5 个 netns 集成用例：v4/v6 清理安全、apply→clear 闭环、dry-run 不改系统）。
 - **preflight.sh**：能力探测在“探测项已存在（并发预检）”时不再误报失败；文档明确该脚本会临时增删一条测试路由并立即删除。
 - **文档同步**：requirements/test-plan/technical/plan/review-findings/user-manuals/faq/folder/README 全量对齐本轮改动。
 
