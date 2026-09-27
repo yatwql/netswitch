@@ -183,3 +183,63 @@ def test_probe_map_reuses_snapshot(tmp_path, monkeypatch):
     c = cfg.load(p, probe_map={"enp2s0": Interface(name="enp2s0", gateway="1.1.1.1")})
     assert [i.name for i in c.interfaces] == ["enp2s0"]
     assert c.interfaces[0].gateway == "1.1.1.1"
+
+
+# ---------- 地址族与网关（IPv6 支持） ----------
+
+def test_ip_versions_defaults_to_v4(tmp_path):
+    p = _write(tmp_path, {"rules": [{"name": "a"}]})
+    c = cfg.load(p, probe=False)
+    assert c.routing.ip_versions == ["v4"]
+    assert c.rules[0].cidrs.ip_versions is None      # 未配置 = 跟随全局
+
+
+def test_ip_versions_global_dual_stack(tmp_path):
+    p = _write(tmp_path, {"routing": {"ip_versions": ["v4", "v6"]}})
+    assert cfg.load(p, probe=False).routing.ip_versions == ["v4", "v6"]
+
+
+def test_ip_versions_rule_override(tmp_path):
+    p = _write(tmp_path, {"routing": {"ip_versions": ["v4", "v6"]},
+                          "rules": [{"name": "a", "cidrs": {"ip_versions": ["v6"]}}]})
+    assert cfg.load(p, probe=False).rules[0].cidrs.ip_versions == ["v6"]
+
+
+@pytest.mark.parametrize("value", [["v5"], [], ["v4", "v4"], "v4", [4]])
+def test_ip_versions_invalid_rejected(tmp_path, value):
+    p = _write(tmp_path, {"routing": {"ip_versions": value}})
+    with pytest.raises(ValueError, match="ip_versions"):
+        cfg.load(p, probe=False)
+
+
+def test_gateway6_accepted(tmp_path):
+    p = _write(tmp_path, {"interfaces": [{"name": "enp2s0", "gateway": "192.168.2.1",
+                                          "gateway6": "fe80::1"}]})
+    c = cfg.load(p, probe=False)
+    assert c.interfaces[0].gateway6 == "fe80::1"
+
+
+def test_gateway6_with_zone_accepted(tmp_path):
+    p = _write(tmp_path, {"interfaces": [{"name": "enp2s0", "gateway6": "fe80::1%enp2s0"}]})
+    assert cfg.load(p, probe=False).interfaces[0].gateway6 == "fe80::1%enp2s0"
+
+
+@pytest.mark.parametrize("gw6", ["192.168.2.1", "not-an-ip", "fe80::zz"])
+def test_gateway6_invalid_rejected(tmp_path, gw6):
+    p = _write(tmp_path, {"interfaces": [{"name": "enp2s0", "gateway6": gw6}]})
+    with pytest.raises(ValueError, match="gateway6"):
+        cfg.load(p, probe=False)
+
+
+def test_gateway_must_be_v4(tmp_path):
+    p = _write(tmp_path, {"interfaces": [{"name": "enp2s0", "gateway": "2001:db8::1"}]})
+    with pytest.raises(ValueError, match="gateway"):
+        cfg.load(p, probe=False)
+
+
+def test_probe_fills_gateway6(tmp_path, monkeypatch):
+    from netswitch.model import Interface
+    p = _write(tmp_path, {"interfaces": [{"name": "enp2s0"}]})
+    c = cfg.load(p, probe_map={"enp2s0": Interface(name="enp2s0", gateway="1.1.1.1",
+                                                  gateway6="fe80::1")})
+    assert c.interfaces[0].gateway6 == "fe80::1"

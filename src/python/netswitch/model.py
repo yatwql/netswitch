@@ -12,8 +12,10 @@ class Interface:
     name: str
     type: str = "wired"            # wired | wireless
     ip: Optional[str] = None       # 形如 192.168.1.7/24
+    ip6: Optional[str] = None      # 形如 2001:db8::7/64（仅全局作用域地址）
     state: str = "down"            # connected | no-carrier | down
     gateway: Optional[str] = None
+    gateway6: Optional[str] = None  # IPv6 网关（常为 fe80::1 链路本地）
     metric: Optional[int] = None
     admin_up: bool = False         # 管理状态（IFF_UP）
     ssid: Optional[str] = None     # 无线网卡当前 SSID
@@ -25,7 +27,8 @@ class IfaceCfg:
     """配置中的单张物理网卡。"""
 
     name: str
-    gateway: Optional[str] = None  # 缺省自动探测
+    gateway: Optional[str] = None  # IPv4 网关；缺省自动探测
+    gateway6: Optional[str] = None  # IPv6 网关；缺省自动探测
     metric: Optional[int] = None   # None = apply 时不调整
     type: Optional[str] = None     # 展示用
 
@@ -40,6 +43,8 @@ class MetricsCfg:
 class RoutingCfg:
     backend: str = "auto"          # auto | nftables | iprule | mainroute
     nft_table: str = "netswitch"
+    # 参与分流的地址族：默认 ["v4"]（向后兼容）；可设 ["v4","v6"] 或 ["v6"]
+    ip_versions: List[str] = field(default_factory=lambda: ["v4"])
 
 
 @dataclass
@@ -50,6 +55,7 @@ class CidrsCfg:
     ttl_hours: int = 24
     extra: List[str] = field(default_factory=list)
     cache_file: Optional[str] = None
+    ip_versions: Optional[List[str]] = None   # 规则级覆盖；None = 用 routing.ip_versions
 
 
 @dataclass

@@ -1,9 +1,11 @@
-"""通用 CIDR 来源：URL+JSON 字段拉取、缓存、extra 合并、规范化。
+"""通用 CIDR 来源：URL+JSON 字段拉取、缓存、extra 合并、规范化（IPv4 + IPv6）。
 
-所有对外结果都经过 `ipaddress` 规范化（v1 仅 IPv4）：
-- 非法项（域名、IPv6、`1.2.3.4/999` 等）一律丢弃并告警，绝不把垃圾喂给
+所有对外结果都经过 `ipaddress` 规范化：
+- 非法项（域名、`1.2.3.4/999` 等）一律丢弃并告警，绝不把垃圾喂给
   `nft` / `ip rule`（真实命令失败会留下半成品状态）；
 - 同一网段的不同写法（`192.168.1.5/24`）归一化为网络地址（`192.168.1.0/24`）；
+- **IPv4 与 IPv6 均保留**，由调用方（routing）按规则/全局 `ip_versions` 选择
+  参与分流的地址族（`split_families()` 提供拆分）；
 - 下载体量有上限，响应必须是 JSON 对象。
 """
 from __future__ import annotations
@@ -13,7 +15,7 @@ import json
 import os
 import time
 import urllib.request
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from . import log
 from .model import CidrsCfg
@@ -25,12 +27,25 @@ MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024
 
 
 def _norm(value) -> Optional[str]:
-    """规范化为 IPv4 CIDR 字符串；非 IPv4/非法时返回 None。"""
+    """规范化为 CIDR 字符串（IPv4/IPv6 均支持）；非法时返回 None。"""
     try:
         net = ipaddress.ip_network(str(value).strip(), strict=False)
     except (TypeError, ValueError):
         return None
-    return str(net) if net.version == 4 else None
+    return str(net)
+
+
+def family_of(cidr: str) -> int:
+    """CIDR 的地址族：6 = IPv6，4 = IPv4。"""
+    return 6 if ":" in str(cidr) else 4
+
+
+def split_families(cidrs: Iterable[str]) -> Tuple[List[str], List[str]]:
+    """拆分为 (IPv4 列表, IPv6 列表)，各自去重排序。"""
+    v4, v6 = [], []
+    for c in cidrs:
+        (v6 if family_of(c) == 6 else v4).append(str(c))
+    return sorted(set(v4)), sorted(set(v6))
 
 
 def _download(url: str, fields: List[str]) -> List[str]:
@@ -70,7 +85,7 @@ def _save_cache(cache_file: str, cidrs: List[str]) -> None:
 
 
 def _finish(cidrs: Iterable[str], warn=None) -> List[str]:
-    """规范化、过滤为 IPv4 CIDR 并去重（非法项告警后丢弃）。"""
+    """规范化（IPv4/IPv6 均保留）、去重并排序（非法项告警后丢弃）。"""
     ok: set = set()
     bad: List[str] = []
     for c in cidrs:

@@ -31,12 +31,13 @@ def test_normalize_and_drop_invalid():
         "192.168.1.5/24",      # 归一化为网络地址
         "1.2.3.4/999",         # 非法前缀
         "example.com",         # 非 IP
-        "2001:db8::/32",       # v1 仅 IPv4
+        "2001:db8:99::5/48",   # v6 归一化后保留（双栈支持）
         "10.0.0.0/8",
         "10.0.0.0/8",          # 重复
         "8.8.8.8",             # 裸地址 -> /32
     ])
-    assert cidrs.fetch_cidrs(cfg) == ["10.0.0.0/8", "192.168.1.0/24", "8.8.8.8/32"]
+    assert cidrs.fetch_cidrs(cfg) == [
+        "10.0.0.0/8", "192.168.1.0/24", "2001:db8:99::/48", "8.8.8.8/32"]
 
 
 def test_invalid_cidrs_warn():
@@ -48,7 +49,14 @@ def test_invalid_cidrs_warn():
 
 def test_manual_source_dedup():
     cfg = CidrsCfg(source="manual", extra=["10.0.0.0/8", "10.0.0.0/8", "2001:db8::/32"])
-    assert cidrs.fetch_cidrs(cfg) == ["10.0.0.0/8"]
+    assert cidrs.fetch_cidrs(cfg) == ["10.0.0.0/8", "2001:db8::/32"]
+
+
+def test_split_families():
+    v4, v6 = cidrs.split_families(
+        ["10.0.0.0/8", "2001:db8::/32", "10.0.0.0/8", "192.168.0.0/16"])
+    assert v4 == ["10.0.0.0/8", "192.168.0.0/16"]
+    assert v6 == ["2001:db8::/32"]
 
 
 def test_url_fetch_merge_extra(monkeypatch):

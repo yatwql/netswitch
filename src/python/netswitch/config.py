@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -72,6 +73,42 @@ def _probe_map(provided: Optional[Dict[str, detect.Interface]] = None
         return {}
 
 
+def _versions(value: Any, field: str) -> Optional[List[str]]:
+    """校验地址族列表（v4/v6）；None 表示“未配置”（规则级用全局）。"""
+    if value is None:
+        return None
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError(f'{field} 必须是数组，例如 ["v4", "v6"]')
+    out = [str(v).strip().lower() for v in value]
+    if not out:
+        raise ValueError(f"{field} 不能为空（至少包含 v4 或 v6）")
+    bad = [v for v in out if v not in ip.VERSION_KEYS]
+    if bad:
+        raise ValueError(
+            f"{field} 含非法值 {bad}（可选：{', '.join(ip.VERSION_KEYS)}）"
+        )
+    if len(set(out)) != len(out):
+        raise ValueError(f"{field} 存在重复项：{out}")
+    return out
+
+
+def _ip_addr(value: Any, field: str, version: int) -> Optional[str]:
+    """校验网关地址（允许 `fe80::1%eth0` 这类带 zone 的写法）。"""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} 必须是非空字符串")
+    raw = value.strip()
+    core = raw.split("%", 1)[0]          # 去掉 zone id 后再校验地址本身
+    try:
+        addr = ipaddress.ip_address(core)
+    except ValueError:
+        raise ValueError(f"{field} 不是合法的 IP 地址：{raw!r}") from None
+    if addr.version != version:
+        raise ValueError(f"{field} 必须是 IPv{version} 地址：{raw!r}")
+    return raw
+
+
 def _parse_interfaces(raw: Any, probe: bool,
                       probe_map: Optional[Dict[str, detect.Interface]] = None
                       ) -> List[IfaceCfg]:
@@ -90,13 +127,17 @@ def _parse_interfaces(raw: Any, probe: bool,
         if not _IFACE_RE.match(str(name)):
             raise ValueError(f"interfaces[].name 非法：{name!r}（只允许字母/数字/._:-）")
         gateway = item.get("gateway")
+        gateway6 = item.get("gateway6")
         metric = item.get("metric")
         if gateway is None and name in pmap:
             gateway = pmap[name].gateway
+        if gateway6 is None and name in pmap:
+            gateway6 = pmap[name].gateway6
         out.append(
             IfaceCfg(
                 name=name,
                 gateway=gateway,
+                gateway6=gateway6,
                 metric=int(metric) if metric is not None else None,
                 type=item.get("type") or (pmap[name].type if name in pmap else None),
             )
@@ -123,6 +164,8 @@ def _parse_rules(raw: Any) -> List[RuleCfg]:
                     ttl_hours=int(c.get("ttl_hours", 24)),
                     extra=list(c.get("extra") or []),
                     cache_file=c.get("cache_file"),
+                    ip_versions=_versions(c.get("ip_versions"),
+                                         f"rules[{idx}].cidrs.ip_versions"),
                 ),
                 table_id=item.get("table_id"),
                 fwmark=item.get("fwmark"),
@@ -160,8 +203,14 @@ def _validate(config: Config) -> None:
         )
     if not _IDENT_RE.match(config.routing.nft_table or ""):
         raise ValueError("routing.nft_table 只允许字母/数字/下划线，长度 1..32")
+    _versions(config.routing.ip_versions, "routing.ip_versions")
     if config.metrics.preferred < 0 or config.metrics.fallback < 0:
         raise ValueError("metrics.preferred / metrics.fallback 不能为负数")
+
+    for idx, ic in enumerate(config.interfaces):
+        where = f"interfaces[{idx}]（{ic.name}）"
+        _ip_addr(ic.gateway, f"{where} gateway", 4)
+        _ip_addr(ic.gateway6, f"{where} gateway6", 6)
 
     for idx, r in enumerate(config.rules):
         where = f"rules[{idx}]（{r.name}）"
@@ -171,6 +220,7 @@ def _validate(config: Config) -> None:
             )
         if r.interface is not None and not _IFACE_RE.match(str(r.interface)):
             raise ValueError(f"{where} interface 非法：{r.interface!r}")
+        _versions(r.cidrs.ip_versions, f"{where} cidrs.ip_versions")
         if r.table_id is None or not (
             ip.TABLE_ID_MIN <= int(r.table_id) <= ip.TABLE_ID_MAX
         ):
@@ -224,6 +274,8 @@ def load(path: str = DEFAULT_CONFIG, *, probe: bool = True,
         routing=RoutingCfg(
             backend=routing.get("backend", "auto"),
             nft_table=routing.get("nft_table", "netswitch"),
+            ip_versions=_versions(routing.get("ip_versions"),
+                                  "routing.ip_versions") or ["v4"],
         ),
         rules=_parse_rules(raw.get("rules")),
         state_file=raw.get("state_file", "data/config/state.json"),

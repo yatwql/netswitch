@@ -155,3 +155,79 @@ def test_dry_run_does_not_touch_system():
         print("OK")
     """)
     _check(proc)
+
+
+@needs_netns
+def test_clear_only_deletes_own_proto200_routes_v6():
+    """IPv6：同样只删本程序 proto 200 的路由，内核直连/他人静态路由保留。"""
+    proc = _run_in_netns("""
+        import subprocess as sp
+
+        from netswitch import routing
+        from netswitch.model import (CidrsCfg, Config, IfaceCfg, RoutingCfg, RuleCfg)
+
+        def ip(*args):
+            return sp.run(["ip", *args], capture_output=True, text=True)
+
+        ip("link", "set", "lo", "up")
+        ip("link", "add", "dummy0", "type", "dummy")
+        ip("link", "set", "dummy0", "up")
+        assert ip("-6", "addr", "add", "2001:db8:1::7/64", "dev", "dummy0").returncode == 0
+
+        # 他人的静态路由 + 本程序的路由（proto 200）
+        assert ip("-6", "route", "add", "2001:db8:aa::/48", "dev", "dummy0",
+                  "proto", "static").returncode == 0
+        assert ip("-6", "route", "add", "2001:db8:99::/48", "dev", "dummy0",
+                  "proto", str(routing.MAINROUTE_PROTO)).returncode == 0
+
+        cfg = Config(
+            routing=RoutingCfg(backend="mainroute", ip_versions=["v4", "v6"]),
+            interfaces=[IfaceCfg(name="dummy0", gateway6="2001:db8:1::1")],
+            rules=[RuleCfg(name="r", interface="dummy0", cidrs=CidrsCfg(
+                source="manual", extra=["2001:db8:99::/48", "2001:db8:aa::/48"]))],
+        )
+        routing.clear_rules(cfg)
+
+        foreign = ip("-6", "route", "show", "2001:db8:aa::/48").stdout
+        own = ip("-6", "route", "show", "2001:db8:99::/48").stdout
+        assert "2001:db8:aa::/48" in foreign, "误删了他人的 v6 静态路由: " + foreign
+        assert own.strip() == "", "本程序的 v6 proto 200 路由没被清掉: " + own
+        print("OK")
+    """)
+    _check(proc)
+
+
+@needs_netns
+def test_apply_then_clear_v6_mainroute_roundtrip():
+    """IPv6：mainroute 应用后能生效，清理后消失，且直连子网路由保留。"""
+    proc = _run_in_netns("""
+        import subprocess as sp
+
+        from netswitch import routing
+        from netswitch.model import (CidrsCfg, Config, IfaceCfg, RoutingCfg, RuleCfg)
+
+        def ip(*args):
+            return sp.run(["ip", *args], capture_output=True, text=True)
+
+        ip("link", "add", "dummy0", "type", "dummy")
+        ip("link", "set", "dummy0", "up")
+        assert ip("-6", "addr", "add", "2001:db8:1::7/64", "dev", "dummy0").returncode == 0
+
+        cfg = Config(
+            routing=RoutingCfg(backend="mainroute", ip_versions=["v4", "v6"]),
+            interfaces=[IfaceCfg(name="dummy0", gateway6="2001:db8:1::1")],
+            rules=[RuleCfg(name="r", interface="dummy0", cidrs=CidrsCfg(
+                source="manual", extra=["2001:db8:99::/48"]))],
+        )
+        warnings = []
+        n = routing.apply_rules(cfg, warn=warnings.append)
+        assert n == 1, warnings
+        out = ip("-6", "-j", "route", "show", "2001:db8:99::/48").stdout
+        assert "dummy0" in out and "200" in out, "v6 mainroute 未生效: " + out
+
+        routing.clear_rules(cfg)
+        assert ip("-6", "route", "show", "2001:db8:99::/48").stdout.strip() == ""
+        assert "2001:db8:1::/64" in ip("-6", "route", "show", "2001:db8:1::/64").stdout
+        print("OK")
+    """)
+    _check(proc)

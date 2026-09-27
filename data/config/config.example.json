@@ -5,7 +5,7 @@
     { "name": "wlp129s0", "gateway": "192.168.1.1", "metric": 600 }
   ],
   "metrics": { "preferred": 100, "fallback": 600 },
-  "routing": { "backend": "auto", "nft_table": "netswitch" },
+  "routing": { "backend": "auto", "nft_table": "netswitch", "ip_versions": ["v4"] },
   "rules": [
     {
       "name": "github",

@@ -145,3 +145,62 @@ def test_policy_probe_non_root_is_unknown(monkeypatch):
 def test_route_list_parses_json(monkeypatch):
     monkeypatch.setattr(ip.ex, "run", lambda *a, **k: _P(json.dumps([{"dst": "default"}])))
     assert ip.route_list() == [{"dst": "default"}]
+
+
+# ---------- 地址族（IPv4 / IPv6 双栈） ----------
+
+def test_family_args_keeps_v4_commands_unchanged():
+    assert ip.family_args(4) == []
+    assert ip.family_args(6) == ["-6"]
+
+
+def test_family_of():
+    assert ip.family_of("140.82.112.0/20") == 4
+    assert ip.family_of("2001:db8::/32") == 6
+
+
+def test_nft_set_name_by_family():
+    assert ip.nft_set_name("github") == "github_v4"
+    assert ip.nft_set_name("github", 6) == "github_v6"
+    assert ip.nft_set_name("my-rule.x", 6) == "my_rule_x_v6"
+
+
+def test_family_available_v4_always_true():
+    assert ip.family_available(4) is True
+    assert ip.family_available(99) is False
+
+
+def test_family_available_v6_readonly_probe(monkeypatch):
+    monkeypatch.setattr(ip.ex, "run", lambda cmd, **kw: _P(rc=2, err="boom"))
+    ip.family_available.cache_clear()
+    assert ip.family_available(6) is False
+    monkeypatch.setattr(ip.ex, "run", lambda cmd, **kw: _P())
+    ip.family_available.cache_clear()
+    assert ip.family_available(6) is True
+    ip.family_available.cache_clear()
+
+
+def test_policy_probe_v6_uses_family_flag(monkeypatch):
+    cmds = []
+    monkeypatch.setattr(ip.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(ip, "family_available", lambda family=4: True)
+    monkeypatch.setattr(ip.ex, "run", lambda cmd, **kw: cmds.append(cmd) or _P())
+    ip.policy_routing_supported.cache_clear()
+    assert ip.policy_routing_supported(6) is True
+    assert cmds == [["ip", "-6", "-j", "rule", "show"]]
+    ip.policy_routing_supported.cache_clear()
+
+
+def test_policy_probe_v6_unavailable_is_false(monkeypatch):
+    monkeypatch.setattr(ip, "family_available", lambda family=4: family != 6)
+    ip.policy_routing_supported.cache_clear()
+    assert ip.policy_routing_supported(6) is False
+    ip.policy_routing_supported.cache_clear()
+
+
+def test_route_and_rule_list_family_flags(monkeypatch):
+    cmds = []
+    monkeypatch.setattr(ip.ex, "run", lambda cmd, **kw: cmds.append(cmd) or _P("[]"))
+    ip.route_list(6)
+    ip.rule_list(6)
+    assert cmds == [["ip", "-6", "-j", "route", "show"], ["ip", "-6", "-j", "rule", "show"]]
