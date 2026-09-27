@@ -2,6 +2,7 @@
 
 导航：↑/↓ 移动选中项；数字 1..N 选网卡；g 切换规则。
 操作：o 开关网卡、m 设为主网卡、t 改 metric；e 选规则生效网卡、p 应用、c 撤销（写回配置）。
+配置：n 新增规则（IP/CIDR 或域名，支持 *.example.com）、x 删除规则 —— 只改配置，apply 后生效。
 全局：d 探测、a 应用全部、r 撤销全部、f/F5 刷新、q/Ctrl+C 退出。
 """
 from __future__ import annotations
@@ -13,6 +14,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from . import apply as apply_mod
+from . import cidrs
 from . import config as config_mod
 from . import detect, iface, log, routing, version
 from .model import Config, RuleCfg
@@ -156,8 +158,9 @@ class _App:
         ans = self._prompt(msg + " [y/N]")
         return ans is not None and ans.lower() in ("y", "yes")
 
-    def _guard(self, fn, busy: str = "执行中…（首次可能需要拉取 CIDR）") -> None:
-        if os.geteuid() != 0:
+    def _guard(self, fn, busy: str = "执行中…（首次可能需要拉取 CIDR）",
+               require_root: bool = True) -> None:
+        if require_root and os.geteuid() != 0:
             self.msg = "需要 root：请用 sudo 运行 scripts/tui-netswitch.sh"
             return
         self.msg = busy
@@ -341,6 +344,8 @@ class _App:
         y += 1
         self._add(y, 0, "── 网卡/规则 ── o 开关 · m 主网卡 · t metric · e 出口 · p 应用 · c 撤销(改配置)")
         y += 1
+        self._add(y, 0, "── 配置 ── n 新增规则(IP/域名，支持 *.example.com) · x 删除规则（均仅写配置）")
+        y += 1
         self._add(y, 0, "── 全局 ── d 探测 · a 应用全部 · r 撤销 · f/F5 刷新 · Esc 返回 · q/Ctrl+C 退出")
         y += 1
         if y < h:
@@ -504,6 +509,69 @@ class _App:
         self._guard(do)
         self.refresh()
 
+    # ---------- 配置规则（只写配置，不触碰网络） ----------
+    def do_add_rule(self) -> None:
+        v = self._prompt("新增规则：IP/CIDR 或域名（可多个，空格/逗号分隔，支持 *.example.com）:")
+        if v is None or v == "":
+            self.msg = "已取消"
+            return
+        try:
+            extra, domains = cidrs.parse_targets(v)
+        except ValueError as exc:
+            self.msg = f"输入无法识别: {exc}"
+            self._show_error(str(exc))
+            return
+        name = config_mod.next_rule_name(self.config_path)
+        if not self._confirm(f"新增规则 {name}：IP/网段 {len(extra)} 个 + 域名 {len(domains)} 个"
+                             f"（仅写配置，apply 后生效）?"):
+            self.msg = "已取消"
+            return
+
+        def do():
+            config_mod.add_rule(self.config_path, name, extra=extra, domains=domains)
+            return (f"已写入配置：{name}（未生效）；选中后按 e 选出口，"
+                    f"或执行 apply / a 生效")
+
+        self._guard(do, require_root=False)
+        self.refresh()
+
+    def do_remove_rule(self) -> None:
+        rules = self.config.rules
+        if not rules:
+            self.msg = "配置里没有规则"
+            return
+        lines = ["删除分流规则（只改配置；已生效的部分等下次 apply 清理）："]
+        for i, r in enumerate(rules, 1):
+            lines.append(f"{i}) {r.name}  出口={r.interface or '-'}  "
+                         f"网段={len(r.cidrs.extra)} 域名={len(r.cidrs.domains)}")
+        self._show_box("删除规则", lines)
+        v = self._prompt("序号（回车=取消）:")
+        if v is None or v == "":
+            self.msg = "已取消"
+            return
+        try:
+            idx = int(v)
+        except ValueError:
+            self.msg = "请输入序号"
+            return
+        if not 1 <= idx <= len(rules):
+            self.msg = "序号超出范围"
+            return
+        name = rules[idx - 1].name
+        if not self._confirm(
+            f"确认从配置里删除规则 {name}?（不影响当前已生效状态，apply 后清理）"
+        ):
+            self.msg = "已取消"
+            return
+
+        def do():
+            if not config_mod.remove_rule(self.config_path, name):
+                raise RuntimeError(f"未找到规则：{name}")
+            return f"已从配置删除规则 {name}（未生效；apply 后清理其分流产物）"
+
+        self._guard(do, require_root=False)
+        self.refresh()
+
     # ---------- 全局 ----------
     def do_detect(self) -> None:
         self.ifaces = detect.detect_interfaces()
@@ -567,6 +635,10 @@ class _App:
             self.do_rule_apply()
         elif key == ord("c"):
             self.do_rule_clear()
+        elif key == ord("n"):
+            self.do_add_rule()
+        elif key == ord("x"):
+            self.do_remove_rule()
         elif ord("1") <= key <= ord("9"):
             self.select(key - ord("1"))
         elif 32 <= key < 127:

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from . import apply as apply_mod
+from . import cidrs as cidrs_mod
 from . import config as config_mod
 from . import detect, exec as ex, iface, log, routing, status
 from .model import Config
@@ -99,7 +100,57 @@ def cmd_metric(args) -> int:
     return 0
 
 
+def _cmd_rule_add(args) -> int:
+    """新增分流规则：**只写配置**，不触碰网络（等 apply 才实施）。"""
+    text = " ".join([*( [args.rule] if args.rule else [] ), *args.targets])
+    if not text.strip():
+        print("错误：请给出至少一个 IP/CIDR 或域名，"
+              "例如 `rule add 10.0.0.0/8 '*.github.com'`", file=sys.stderr)
+        return 2
+    try:
+        extra, domains = cidrs_mod.parse_targets(text)
+        name = args.name or config_mod.next_rule_name(args.config)
+        if getattr(args, "dry_run", False):
+            print(f"[dry-run] 将新增规则 {name}："
+                  f"IP/网段={extra or []} 域名={domains or []} "
+                  f"出口={args.interface or '(未指定，需之后用 e 选或 apply 前补齐)'}")
+            return 0
+        config_mod.add_rule(args.config, name, extra=extra, domains=domains,
+                            interface=args.interface)
+    except ValueError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 2
+    print(f"已写入配置：{name}（IP/网段 {len(extra)}，域名 {len(domains)}）")
+    if not args.interface:
+        print("提示：未指定出口网卡，该规则在 apply 时会被跳过；"
+              "可在 TUI 选中后按 e 选择。")
+    print("提示：仅修改配置，尚未生效；执行 apply 后才会作用到网卡。")
+    return 0
+
+
+def _cmd_rule_remove(args) -> int:
+    """删除分流规则：**只写配置**，不触碰网络（等 apply 才清理）。"""
+    if not args.rule:
+        print("错误：请给出要删除的规则名（`rule remove <规则名>`）", file=sys.stderr)
+        return 2
+    if getattr(args, "dry_run", False):
+        print(f"[dry-run] 将从配置删除规则 {args.rule}（不触碰网络）")
+        return 0
+    if not config_mod.remove_rule(args.config, args.rule):
+        print(f"未找到规则：{args.rule}", file=sys.stderr)
+        return 1
+    print(f"已从配置删除规则 {args.rule}")
+    print("提示：仅修改配置，尚未生效；执行 apply 后其分流产物会被清理。")
+    return 0
+
+
 def cmd_rule(args) -> int:
+    # add/remove 只改配置文件，不需要 root（写入失败会给出权限错误）
+    if args.action == "add":
+        return _cmd_rule_add(args)
+    if args.action == "remove":
+        return _cmd_rule_remove(args)
+
     ex.require_root()
     config = _load(args)
     target = None
@@ -219,9 +270,14 @@ def build_parser() -> argparse.ArgumentParser:
     _common(m)
 
     r = sub.add_parser("rule", help="分流规则")
-    r.add_argument("action", choices=["apply", "clear"])
-    r.add_argument("rule", help="规则名（配置中 rules[].name）")
-    r.add_argument("--interface", help="一次性运行时覆盖出口网卡")
+    r.add_argument("action", choices=["apply", "clear", "add", "remove"],
+                   help="apply/clear=应用或撤销（立即生效）；add/remove=只改配置")
+    r.add_argument("rule", nargs="?",
+                   help="apply/clear/remove：规则名；add：可放第一个目标（可选）")
+    r.add_argument("targets", nargs="*",
+                   help="add：IP/CIDR 或域名（支持 *.example.com），可多个")
+    r.add_argument("--interface", help="出口网卡（apply 时为一次性覆盖；add 时写入配置）")
+    r.add_argument("--name", help="add：规则名（默认 custom-N）")
     _common(r)
 
     a = sub.add_parser("apply", help="按配置应用全部")

@@ -117,3 +117,129 @@ def test_service_template_detects_bad_arg_order():
 def test_service_template_requires_exec_start():
     with pytest.raises(RuntimeError, match="ExecStart"):
         cli._validate_unit("[Service]\nType=oneshot\n")
+
+
+# ---------- rule add / rule remove（只写配置，不触碰网络） ----------
+
+def _config_file(tmp_path, rules=None):
+    import json
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"version": 1, "rules": rules or []}), encoding="utf-8")
+    return p
+
+
+def _no_network(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("add/remove 不应触碰网络（apply_rules 被调用）")
+
+    monkeypatch.setattr(cli.routing, "apply_rules", boom)
+
+
+def test_parser_rule_add():
+    a = cli.build_parser().parse_args(
+        ["rule", "add", "10.0.0.0/8", "*.github.com", "--name", "myrule"])
+    assert a.action == "add"
+    assert a.rule == "10.0.0.0/8"
+    assert a.targets == ["*.github.com"]
+    assert a.name == "myrule"
+
+
+def test_parser_rule_remove():
+    a = cli.build_parser().parse_args(["rule", "remove", "github"])
+    assert a.action == "remove"
+    assert a.rule == "github"
+
+
+def test_rule_add_writes_config_only(tmp_path, monkeypatch, capsys):
+    from netswitch import config as config_mod
+    p = _config_file(tmp_path)
+    _no_network(monkeypatch)
+    args = cli.build_parser().parse_args(
+        ["--config", str(p), "rule", "add", "10.0.0.0/8", "1.2.3.4", "*.github.com"])
+    assert cli.cmd_rule(args) == 0
+    out = capsys.readouterr().out
+    assert "已写入配置" in out and "尚未生效" in out
+    c = config_mod.load(str(p), probe=False)
+    assert [r.name for r in c.rules] == ["custom-1"]
+    assert c.rules[0].cidrs.extra == ["10.0.0.0/8", "1.2.3.4/32"]
+    assert c.rules[0].cidrs.domains == ["*.github.com"]
+
+
+def test_rule_add_with_name_and_interface(tmp_path, monkeypatch):
+    from netswitch import config as config_mod
+    p = _config_file(tmp_path)
+    _no_network(monkeypatch)
+    args = cli.build_parser().parse_args(
+        ["--config", str(p), "rule", "add", "example.com", "--name", "site",
+         "--interface", "enp2s0"])
+    assert cli.cmd_rule(args) == 0
+    c = config_mod.load(str(p), probe=False)
+    assert c.rules[0].name == "site"
+    assert c.rules[0].interface == "enp2s0"
+    assert c.rules[0].cidrs.domains == ["example.com"]
+
+
+def test_rule_add_does_not_require_root(tmp_path, monkeypatch):
+    p = _config_file(tmp_path)
+    _no_network(monkeypatch)
+    monkeypatch.setattr(cli.ex, "require_root",
+                        lambda: (_ for _ in ()).throw(AssertionError("不应要求 root")))
+    args = cli.build_parser().parse_args(["--config", str(p), "rule", "add", "1.1.1.1"])
+    assert cli.cmd_rule(args) == 0
+
+
+def test_rule_add_dry_run_does_not_write(tmp_path, monkeypatch, capsys):
+    p = _config_file(tmp_path)
+    _no_network(monkeypatch)
+    before = p.read_text(encoding="utf-8")
+    args = cli.build_parser().parse_args(
+        ["--config", str(p), "rule", "add", "1.1.1.1", "--dry-run"])
+    assert cli.cmd_rule(args) == 0
+    assert "[dry-run]" in capsys.readouterr().out
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_rule_add_invalid_input(tmp_path, monkeypatch, capsys):
+    p = _config_file(tmp_path)
+    _no_network(monkeypatch)
+    args = cli.build_parser().parse_args(
+        ["--config", str(p), "rule", "add", "10.0.0.0/99"])
+    assert cli.cmd_rule(args) == 2
+    assert "错误" in capsys.readouterr().err
+
+
+def test_rule_add_without_targets(tmp_path, monkeypatch, capsys):
+    p = _config_file(tmp_path)
+    _no_network(monkeypatch)
+    args = cli.build_parser().parse_args(["--config", str(p), "rule", "add"])
+    assert cli.cmd_rule(args) == 2
+    assert "至少一个" in capsys.readouterr().err
+
+
+def test_rule_remove_writes_config_only(tmp_path, monkeypatch, capsys):
+    from netswitch import config as config_mod
+    p = _config_file(tmp_path, rules=[{"name": "a"}, {"name": "b"}])
+    _no_network(monkeypatch)
+    args = cli.build_parser().parse_args(["--config", str(p), "rule", "remove", "a"])
+    assert cli.cmd_rule(args) == 0
+    assert "已从配置删除规则 a" in capsys.readouterr().out
+    assert [r.name for r in config_mod.load(str(p), probe=False).rules] == ["b"]
+
+
+def test_rule_remove_unknown(tmp_path, monkeypatch, capsys):
+    p = _config_file(tmp_path, rules=[{"name": "a"}])
+    _no_network(monkeypatch)
+    args = cli.build_parser().parse_args(["--config", str(p), "rule", "remove", "zzz"])
+    assert cli.cmd_rule(args) == 1
+    assert "未找到规则" in capsys.readouterr().err
+
+
+def test_rule_remove_dry_run(tmp_path, monkeypatch, capsys):
+    p = _config_file(tmp_path, rules=[{"name": "a"}])
+    _no_network(monkeypatch)
+    before = p.read_text(encoding="utf-8")
+    args = cli.build_parser().parse_args(
+        ["--config", str(p), "rule", "remove", "a", "--dry-run"])
+    assert cli.cmd_rule(args) == 0
+    assert "[dry-run]" in capsys.readouterr().out
+    assert p.read_text(encoding="utf-8") == before
