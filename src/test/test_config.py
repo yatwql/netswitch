@@ -20,7 +20,10 @@ def test_defaults(tmp_path):
     assert c.metrics.fallback == 600
     assert c.rules[0].table_id == 200
     assert c.rules[0].fwmark == 1
-    assert c.rules[0].cidrs.cache_file == "data/config/cache-github.json"
+    # 路径被归一化为绝对路径且落在数据目录内
+    assert c.rules[0].cidrs.cache_file.endswith("data/config/cache-github.json")
+    assert cfg.data_dir() in __import__("pathlib").Path(c.rules[0].cidrs.cache_file).parents
+    assert c.state_file.endswith("data/config/state.json")
 
 
 def test_auto_unique_ids(tmp_path):
@@ -63,6 +66,9 @@ def test_update_rule_interface(tmp_path):
     assert cfg.load(p, probe=False).rules[0].interface is None
     # 未找到规则
     assert cfg.update_rule_interface(p, "nope", "eth0") is False
+    # 非法网卡名拒绝写回
+    with pytest.raises(ValueError):
+        cfg.update_rule_interface(p, "r1", "bad name")
 
 
 def test_seed_default_rules(tmp_path):
@@ -77,3 +83,103 @@ def test_seed_default_rules(tmp_path):
     assert [r.name for r in c.rules] == ["github"]
     # 已有规则 -> 不覆盖
     assert cfg.seed_default_rules(str(p)) is False
+
+
+# ---------- 安全校验（P0-3） ----------
+
+def test_backend_typo_rejected(tmp_path):
+    """backend 拼错必须报错，而不是静默回退 auto。"""
+    p = _write(tmp_path, {"routing": {"backend": "nftable"}})
+    with pytest.raises(ValueError, match="routing.backend"):
+        cfg.load(p, probe=False)
+
+
+def test_backend_mainroute_accepted(tmp_path):
+    p = _write(tmp_path, {"routing": {"backend": "mainroute"}})
+    assert cfg.load(p, probe=False).routing.backend == "mainroute"
+
+
+@pytest.mark.parametrize("table", ["ns; include \"/x\"", "bad name", "", "a" * 40])
+def test_nft_table_injection_rejected(tmp_path, table):
+    p = _write(tmp_path, {"routing": {"backend": "nftables", "nft_table": table}})
+    with pytest.raises(ValueError, match="nft_table"):
+        cfg.load(p, probe=False)
+
+
+@pytest.mark.parametrize("table_id", [0, 1, 199, 253, 254, 255, 999])
+def test_reserved_table_id_rejected(tmp_path, table_id):
+    """253/254/255 是内核保留表；误用会让 `ip route flush table` 清空主表。"""
+    p = _write(tmp_path, {"rules": [{"name": "a", "table_id": table_id}]})
+    with pytest.raises(ValueError, match="table_id"):
+        cfg.load(p, probe=False)
+
+
+@pytest.mark.parametrize("mark", [0, -1, 0x100000000])
+def test_invalid_fwmark_rejected(tmp_path, mark):
+    p = _write(tmp_path, {"rules": [{"name": "a", "fwmark": mark}]})
+    with pytest.raises(ValueError, match="fwmark"):
+        cfg.load(p, probe=False)
+
+
+@pytest.mark.parametrize("name", ["../x", "a/b", "a b", "", "a" * 33])
+def test_invalid_rule_name_rejected(tmp_path, name):
+    p = _write(tmp_path, {"rules": [{"name": name}]})
+    with pytest.raises(ValueError):
+        cfg.load(p, probe=False)
+
+
+def test_sanitized_set_name_collision_rejected(tmp_path):
+    """a-b 与 a.b 归一化后同为 a_b_v4，会让 nft -f 整表失败。"""
+    p = _write(tmp_path, {"rules": [{"name": "a-b"}, {"name": "a.b"}]})
+    with pytest.raises(ValueError, match="重名"):
+        cfg.load(p, probe=False)
+
+
+def test_cidr_source_validated(tmp_path):
+    p = _write(tmp_path, {"rules": [{"name": "a", "cidrs": {"source": "ftp"}}]})
+    with pytest.raises(ValueError, match="source"):
+        cfg.load(p, probe=False)
+
+
+def test_negative_ttl_rejected(tmp_path):
+    p = _write(tmp_path, {"rules": [{"name": "a", "cidrs": {"ttl_hours": -1}}]})
+    with pytest.raises(ValueError, match="ttl_hours"):
+        cfg.load(p, probe=False)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("state_file", "/etc/passwd"),
+    ("state_file", "../../../etc/netswitch.json"),
+    ("cache", "/etc/cron.d/x.json"),
+    ("cache", "../../notes.json"),
+])
+def test_data_path_escape_rejected(tmp_path, field, value):
+    """配置里的路径会被 root 写入，必须限制在数据目录内。"""
+    if field == "state_file":
+        data = {"state_file": value}
+    else:
+        data = {"rules": [{"name": "a", "cidrs": {"cache_file": value}}]}
+    p = _write(tmp_path, data)
+    with pytest.raises(ValueError, match="数据目录"):
+        cfg.load(p, probe=False)
+
+
+def test_relative_data_path_anchored_to_repo_root(tmp_path):
+    """相对路径按仓库根解析，不受当前工作目录影响。"""
+    p = _write(tmp_path, {"state_file": "data/config/mystate.json"})
+    c = cfg.load(p, probe=False)
+    assert c.state_file == str(cfg.REPO_ROOT / "data" / "config" / "mystate.json")
+
+
+def test_probe_map_reuses_snapshot(tmp_path, monkeypatch):
+    """TUI 每次刷新都调用 load；传入探测快照时不应再执行 ip 命令。"""
+    from netswitch.model import Interface
+
+    def boom():
+        raise AssertionError("不应重复探测网卡")
+
+    monkeypatch.setattr(cfg.detect, "detect_interfaces", boom)
+    p = _write(tmp_path, {})          # 无 interfaces 段 -> 用快照填充
+    c = cfg.load(p, probe_map={"enp2s0": Interface(name="enp2s0", gateway="1.1.1.1")})
+    assert [i.name for i in c.interfaces] == ["enp2s0"]
+    assert c.interfaces[0].gateway == "1.1.1.1"

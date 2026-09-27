@@ -17,6 +17,7 @@ class Interface:
     metric: Optional[int] = None
     admin_up: bool = False         # 管理状态（IFF_UP）
     ssid: Optional[str] = None     # 无线网卡当前 SSID
+    device_confirmed: bool = False  # sysfs 中有 device 节点（真实 PCI/USB 设备）
 
 
 @dataclass
@@ -37,7 +38,7 @@ class MetricsCfg:
 
 @dataclass
 class RoutingCfg:
-    backend: str = "auto"          # auto | nftables | iprule
+    backend: str = "auto"          # auto | nftables | iprule | mainroute
     nft_table: str = "netswitch"
 
 

@@ -20,14 +20,24 @@ def _ip_map() -> Dict[str, str]:
     return m
 
 
+def _metric_key(metric) -> tuple:
+    """metric 缺失（None = 未设置）排在有效值之后。"""
+    return (metric is None, metric if metric is not None else 0)
+
+
 def _default_routes() -> Dict[str, tuple]:
-    """dev -> (gateway, metric)"""
+    """dev -> (gateway, metric)；同一网卡多条默认路由时取 metric 最小者。"""
     m: Dict[str, tuple] = {}
     for r in ip.route_list():
-        if r.get("dst") == "default":
-            dev = r.get("dev")
-            if dev and dev not in m:
-                m[dev] = (r.get("gateway"), r.get("metric"))
+        if r.get("dst") != "default":
+            continue
+        dev = r.get("dev")
+        if not dev:
+            continue
+        cand = (r.get("gateway"), r.get("metric"))
+        cur = m.get(dev)
+        if cur is None or _metric_key(cand[1]) < _metric_key(cur[1]):
+            m[dev] = cand
     return m
 
 
@@ -52,6 +62,7 @@ def detect_interfaces() -> List[Interface]:
                 metric=metric,
                 admin_up=ip.admin_up(link),
                 ssid=ip.wireless_ssid(name) if itype == "wireless" else None,
+                device_confirmed=ip.has_device(name),
             )
         )
     return result
