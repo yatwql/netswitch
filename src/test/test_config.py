@@ -243,3 +243,91 @@ def test_probe_fills_gateway6(tmp_path, monkeypatch):
     c = cfg.load(p, probe_map={"enp2s0": Interface(name="enp2s0", gateway="1.1.1.1",
                                                   gateway6="fe80::1")})
     assert c.interfaces[0].gateway6 == "fe80::1"
+
+
+# ---------- 域名规则（新增/删除，只写配置） ----------
+
+def test_domains_loaded_and_normalized(tmp_path):
+    p = _write(tmp_path, {"rules": [{"name": "a", "cidrs": {
+        "domains": ["Example.COM", "*.GitHub.com"]}}]})
+    c = cfg.load(p, probe=False)
+    assert c.rules[0].cidrs.domains == ["Example.COM", "*.GitHub.com"]  # 原样保留
+    assert c.rules[0].cidrs.wildcard_probe is True
+
+
+@pytest.mark.parametrize("domains", [["1.2.3.4"], ["bad domain"], ["*.", "a.*.com"]])
+def test_invalid_domains_rejected(tmp_path, domains):
+    p = _write(tmp_path, {"rules": [{"name": "a", "cidrs": {"domains": domains}}]})
+    with pytest.raises(ValueError):
+        cfg.load(p, probe=False)
+
+
+def test_too_many_domains_rejected(tmp_path):
+    from netswitch import cidrs as cidrs_mod
+    p = _write(tmp_path, {"rules": [{"name": "a", "cidrs": {
+        "domains": [f"d{i}.example.com" for i in range(cidrs_mod.MAX_DOMAINS + 1)]}}]})
+    with pytest.raises(ValueError, match="最多"):
+        cfg.load(p, probe=False)
+
+
+def test_wildcard_probe_can_be_disabled(tmp_path):
+    p = _write(tmp_path, {"rules": [{"name": "a", "cidrs": {
+        "domains": ["*.github.com"], "wildcard_probe": False}}]})
+    assert cfg.load(p, probe=False).rules[0].cidrs.wildcard_probe is False
+
+
+def test_next_rule_name(tmp_path):
+    p = _write(tmp_path, {"rules": [{"name": "custom-1"}, {"name": "custom-3"}]})
+    assert cfg.next_rule_name(p) == "custom-2"
+    assert cfg.next_rule_name(p, prefix="r") == "r1"
+    assert cfg.next_rule_name(str(tmp_path / "missing.json")) == "custom-1"
+
+
+def test_add_rule_writes_config_only(tmp_path):
+    p = _write(tmp_path, {"version": 1, "rules": []})
+    name = cfg.add_rule(p, "custom-1", extra=["10.0.0.0/8", "1.2.3.4"],
+                        domains=["*.github.com"])
+    assert name == "custom-1"
+    c = cfg.load(p, probe=False)
+    assert [r.name for r in c.rules] == ["custom-1"]
+    assert c.rules[0].cidrs.extra == ["10.0.0.0/8", "1.2.3.4/32"]
+    assert c.rules[0].cidrs.domains == ["*.github.com"]
+    assert c.rules[0].interface is None          # 未指定出口 -> apply 时会跳过
+
+
+def test_add_rule_with_interface_and_versions(tmp_path):
+    p = _write(tmp_path, {"version": 1, "rules": []})
+    cfg.add_rule(p, "custom-1", extra=["1.2.3.4"], interface="wlp129s0",
+                 ip_versions=["v4", "v6"])
+    c = cfg.load(p, probe=False)
+    assert c.rules[0].interface == "wlp129s0"
+    assert c.rules[0].cidrs.ip_versions == ["v4", "v6"]
+
+
+def test_add_rule_rejects_duplicate_and_invalid(tmp_path):
+    p = _write(tmp_path, {"version": 1, "rules": [{"name": "a"}]})
+    with pytest.raises(ValueError, match="已存在"):
+        cfg.add_rule(p, "a", extra=["1.1.1.1"])
+    for kwargs in ({"extra": []}, {"extra": ["nope"]},
+                   {"extra": ["1.1.1.1"], "interface": "bad name"},
+                   {"extra": ["1.1.1.1"], "ip_versions": ["v5"]}):
+        with pytest.raises(ValueError):
+            cfg.add_rule(p, "b", **kwargs)
+    with pytest.raises(ValueError, match="规则名非法"):
+        cfg.add_rule(p, "bad name", extra=["1.1.1.1"])
+
+
+def test_remove_rule(tmp_path):
+    p = _write(tmp_path, {"version": 1, "rules": [{"name": "a"}, {"name": "b"}]})
+    assert cfg.remove_rule(p, "a") is True
+    assert [r.name for r in cfg.load(p, probe=False).rules] == ["b"]
+    assert cfg.remove_rule(p, "nope") is False
+
+
+def test_write_refuses_to_leave_broken_config(tmp_path):
+    """配置本身已非法时，写入被拒绝且文件内容不变（不会把配置改得更坏）。"""
+    p = _write(tmp_path, {"routing": {"backend": "nope"}, "rules": []})
+    before = open(p, encoding="utf-8").read()
+    with pytest.raises(ValueError):
+        cfg.add_rule(p, "custom-1", extra=["1.1.1.1"])
+    assert open(p, encoding="utf-8").read() == before

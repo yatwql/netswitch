@@ -56,6 +56,10 @@ class CidrsCfg:
     extra: List[str] = field(default_factory=list)
     cache_file: Optional[str] = None
     ip_versions: Optional[List[str]] = None   # 规则级覆盖；None = 用 routing.ip_versions
+    domains: List[str] = field(default_factory=list)
+    """域名/通配符（如 `example.com`、`*.github.com`）：apply 时解析为 CIDR。"""
+    wildcard_probe: bool = True
+    """对 `*.example.com` 是否做 DNS 通配符探测（对随机子域发一次查询）。"""
 
 
 @dataclass

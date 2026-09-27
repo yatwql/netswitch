@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import detect, ip, log
+from . import cidrs as cidrs_mod
 from .model import (
     CidrsCfg,
     Config,
@@ -166,6 +167,8 @@ def _parse_rules(raw: Any) -> List[RuleCfg]:
                     cache_file=c.get("cache_file"),
                     ip_versions=_versions(c.get("ip_versions"),
                                          f"rules[{idx}].cidrs.ip_versions"),
+                    domains=[str(d) for d in (c.get("domains") or [])],
+                    wildcard_probe=bool(c.get("wildcard_probe", True)),
                 ),
                 table_id=item.get("table_id"),
                 fwmark=item.get("fwmark"),
@@ -237,6 +240,16 @@ def _validate(config: Config) -> None:
             )
         if r.cidrs.ttl_hours < 0:
             raise ValueError(f"{where} cidrs.ttl_hours 不能为负数")
+        if len(r.cidrs.domains) > cidrs_mod.MAX_DOMAINS:
+            raise ValueError(
+                f"{where} cidrs.domains 最多 {cidrs_mod.MAX_DOMAINS} 条"
+                f"（当前 {len(r.cidrs.domains)}）"
+            )
+        for d in r.cidrs.domains:
+            try:
+                cidrs_mod.validate_domain(d)
+            except ValueError as exc:
+                raise ValueError(f"{where} {exc}") from None
 
     set_names = [ip.nft_set_name(r.name) for r in config.rules]
     dup = {n for n in set_names if set_names.count(n) > 1}
@@ -309,6 +322,124 @@ def update_interfaces(path: str, fragment: List[dict]) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(raw, fh, ensure_ascii=False, indent=2)
+
+
+def _load_raw(path: str) -> dict:
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = json.load(fh)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_raw(path: str, raw: dict) -> None:
+    """写回配置，并**重新加载校验**；失败则回滚为原内容（不让 apply 读到坏配置）。"""
+    old = None
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            old = fh.read()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(raw, fh, ensure_ascii=False, indent=2)
+    try:
+        load(path, probe=False)
+    except Exception:
+        if old is None:
+            try:
+                os.remove(path)
+            except OSError:  # pragma: no cover
+                pass
+        else:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(old)
+        raise
+
+
+def next_rule_name(path: str, prefix: str = "custom-") -> str:
+    """生成下一个可用规则名（`custom-1`、`custom-2`…）。"""
+    raw = _load_raw(path)
+    used = {str(r.get("name")) for r in (raw.get("rules") or [])
+            if isinstance(r, dict)}
+    idx = 1
+    while f"{prefix}{idx}" in used:
+        idx += 1
+    return f"{prefix}{idx}"
+
+
+def add_rule(path: str, name: str, *, extra=None, domains=None, interface=None,
+             ip_versions=None) -> str:
+    """在配置里新增一条分流规则（**只写文件，不触碰网络**）。返回规则名。
+
+    新规则在**下一次 `apply`** 时才生效；`interface` 留空表示暂不指定出口网卡
+    （可在 TUI 选中后按 `e` 选择）。参数会在写入前校验/规范化。
+    """
+    name = (name or "").strip()
+    if not _RULE_NAME_RE.match(name):
+        raise ValueError("规则名非法：只允许字母/数字/下划线/短横线/点，长度 1..32")
+    if interface is not None and not _IFACE_RE.match(str(interface)):
+        raise ValueError(f"interface 非法：{interface!r}")
+    versions = _versions(list(ip_versions) if ip_versions else None,
+                         "cidrs.ip_versions")
+
+    cidr_list: List[str] = []
+    for item in (extra or []):
+        norm = cidrs_mod.normalize_cidr(item)
+        if not norm:
+            raise ValueError(f"既不是合法 IP/CIDR：{item!r}")
+        if norm not in cidr_list:
+            cidr_list.append(norm)
+    domain_list: List[str] = []
+    for item in (domains or []):
+        norm = cidrs_mod.validate_domain(str(item))
+        if norm not in domain_list:
+            domain_list.append(norm)
+    if len(domain_list) > cidrs_mod.MAX_DOMAINS:
+        raise ValueError(f"域名数量 {len(domain_list)} 超过上限 {cidrs_mod.MAX_DOMAINS}")
+    if not cidr_list and not domain_list:
+        raise ValueError("至少需要一个 IP/CIDR 或一个域名")
+
+    raw = _load_raw(path)
+    raw.setdefault("version", 1)
+    rules = raw.get("rules")
+    if not isinstance(rules, list):
+        rules = []
+        raw["rules"] = rules
+    if any(isinstance(r, dict) and r.get("name") == name for r in rules):
+        raise ValueError(f"规则名已存在：{name}")
+
+    cidrs_cfg: dict = {"source": "manual"}
+    if cidr_list:
+        cidrs_cfg["extra"] = cidr_list
+    if domain_list:
+        cidrs_cfg["domains"] = domain_list
+    if versions:
+        cidrs_cfg["ip_versions"] = versions
+    rule: dict = {"name": name, "enabled": True, "cidrs": cidrs_cfg}
+    if interface:
+        rule["interface"] = interface
+    rules.append(rule)
+    _write_raw(path, raw)
+    _log.info("config: 新增规则 %s（网段 %d，域名 %s，出口 %s，仅写配置未生效）",
+              name, len(cidr_list), domain_list or "-", interface or "-")
+    return name
+
+
+def remove_rule(path: str, name: str) -> bool:
+    """从配置里删除一条分流规则（**只写文件，不触碰网络**）。返回是否删除。
+
+    当前已生效的分流产物会在下一次 `apply` 时按签名清理掉。
+    """
+    raw = _load_raw(path)
+    rules = raw.get("rules")
+    if not isinstance(rules, list) or not rules:
+        return False
+    kept = [r for r in rules if not (isinstance(r, dict) and r.get("name") == name)]
+    if len(kept) == len(rules):
+        return False
+    raw["rules"] = kept
+    _write_raw(path, raw)
+    _log.info("config: 删除规则 %s（仅写配置；下次 apply 会清理其分流产物）", name)
+    return True
 
 
 def update_rule_interface(path: str, rule_name: str, interface) -> bool:

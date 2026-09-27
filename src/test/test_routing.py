@@ -652,3 +652,42 @@ def test_backend_note():
     assert "nftables" in routing.backend_note("nftables")
     assert "mainroute" in routing.backend_note("mainroute")
     assert routing.backend_note("?") == "?"
+
+
+# ---------- 域名规则端到端（解析 → 分流，v4+v6） ----------
+
+def _fake_dns(table):
+    import socket as _socket
+
+    def fake(host, port, proto=None):
+        if host in table:
+            fam = _socket.AF_INET6 if ":" in table[host][0] else _socket.AF_INET
+            return [(fam, _socket.SOCK_STREAM, 6, "",
+                     (a, 0) if fam == _socket.AF_INET else (a, 0, 0, 0))
+                    for a in table[host]]
+        raise _socket.gaierror(-2, "not found")
+    return fake
+
+
+def test_apply_rule_with_domains_resolves_cidrs(monkeypatch, tmp_path):
+    """域名规则：apply 时才解析（A + AAAA），并按地址族分流。"""
+    from netswitch import cidrs as cidrs_mod
+
+    calls = []
+    real_fetch = cidrs_mod.fetch_cidrs          # 先取真实现（_patch_env 会把它换掉）
+    _patch_env(monkeypatch, calls)
+    monkeypatch.setattr(routing.cidrs, "fetch_cidrs", real_fetch)
+    monkeypatch.setattr(cidrs_mod.socket, "getaddrinfo",
+                        _fake_dns({"example.com": ["1.2.3.4", "2001:db8::5"]}))
+
+    cfg = Config(
+        routing=RoutingCfg(backend="mainroute", ip_versions=["v4", "v6"]),
+        rules=[RuleCfg(name="site", interface="wlp129s0", cidrs=CidrsCfg(
+            source="manual", domains=["example.com"],
+            cache_file=str(tmp_path / "cache-site.json")))],
+    )
+    assert routing.apply_rules(cfg) == 1
+    cmds = _cmds(calls)
+    assert "ip route replace 1.2.3.4/32 via 192.168.1.1 dev wlp129s0 proto 200" in cmds
+    assert ("ip -6 route replace 2001:db8::5/128 via 2001:db8:1::1 "
+            "dev wlp129s0 proto 200") in cmds
