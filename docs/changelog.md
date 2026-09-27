@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added（IPv6 双栈分流，FR10）
+- 分流规则支持 **IPv6**：`cidrs` 来源（URL / `extra`）现在同时保留 v4 与 v6（`cidrs._finish` 不再丢弃 v6，并统一规范化）。
+- 新增 `routing.ip_versions`（默认 `["v4"]`，**向后兼容**）与规则级覆盖 `rules[].cidrs.ip_versions`（可为单条规则开/关某个族）。
+- 新增 `interfaces[].gateway6`（缺省自动探测；探测值写入 `detect --write` 的配置片段）；TUI/status 展示网卡 v6 地址/网关与规则的地址族（`族=v4+v6`）。
+- 三个后端均支持 v6：nftables（`ipv6_addr` 集合 + `ip6 daddr` + `ip -6 rule fwmark`）、iprule（`ip -6 route ... table N` + `ip -6 rule add to <v6>`）、mainroute（`ip -6 route replace ... proto 200`）。
+- **降级而不失败**：系统未启用 IPv6、出口网卡无 v6 网关、或内核缺 `CONFIG_IPV6_MULTIPLE_TABLES` 时，告警并跳过 v6，v4 分流照常生效（`mainroute` 不依赖多路由表，v6 仍可分）。
+- 能力探测新增地址族维度：`ip.family_available(6)`（只读）、`policy_routing_supported(family)`；v6 不可用时不做任何 `ip -6` 写操作或查询。
+- 清理同样只动自己的产物：v6 明细路由按 `proto 200` + 出口网卡 + 地址族判定；`ip -6 rule` / `ip -6 route flush table` 按同一签名清理（netns 用例 I-12/I-13）。
+
 ### Security / Fixed（安全与正确性）
 - **修复误删路由（严重）**：`clear_rules` 不再无条件执行 `ip route del <cidr> table main`。现在只删除“主表中确实存在、`proto = 200`（本程序标记）、且出口网卡匹配”的条目，不再误删内核直连路由、他人 `proto static` 路由或 VPN 路由（netns 实测旧实现会删掉它们）。同时清理只针对 `mainroute` 后端已启用规则，不再受禁用/被排除规则影响。
 - **修复 systemd 单元不可用**：`ExecStart` 由 `apply --yes --config .../config.yaml`（扩展名错 + 顶层选项位置错，实测 exit=2）改为 `--config .../config.json apply --yes`，并新增 `WorkingDirectory`；`install-systemd` 写入前会用同一套 argparse 校验 `ExecStart`。
@@ -28,7 +37,7 @@
 - **CI 升级**：Python 3.9/3.11/3.13 矩阵上直接跑 `scripts/check.sh`（补上此前遗漏的版本一致性核对），并新增 shell 语法检查（`bash -n`）、`compileall` 与 `pyproject.toml` 解析。
 - **文档门禁自动化**：`check-docs.sh` 新增「`folder.md` 必须覆盖 src/scripts/data/config 与工程文件」与「改动了 `src/`/`scripts/` 就必须同步 `docs/changelog.md`」两项检查（AGENTS.md 的人工要求变成机器门禁）。
 - **新增 `pyproject.toml`**：包元数据、`netswitch`/`netswitch-tui` 入口点与 dev 依赖；版本仍以 `version.py` 为唯一来源。⚠️ 仅做了 TOML 解析与元数据校验（CI 与本次改动环境均未安装 setuptools，未实际构建/安装验证）；`install-systemd`、`data/config/*` 仍按“仓库内运行”假定，打包安装后的 systemd 集成不在支持范围。
-- **测试**：新增 netns 集成测试（`src/test/test_integration_netns.py`，用 `unshare -rn`，**无需 root**，环境不支持自动 skip）与 `test_status.py`；重写 `test_routing`/`test_config`/`test_apply`/`test_iface`/`test_ip`/`test_cidrs`/`test_cli`/`test_log`/`test_tui`。用例数 44 → **160**（含 3 个 netns 集成用例）。
+- **测试**：新增 netns 集成测试（`src/test/test_integration_netns.py`，用 `unshare -rn`，**无需 root**，环境不支持自动 skip）与 `test_status.py`；重写 `test_routing`/`test_config`/`test_apply`/`test_iface`/`test_ip`/`test_cidrs`/`test_cli`/`test_log`/`test_tui`/`test_detect`。用例数 44 → **218**（含 5 个 netns 集成用例：v4/v6 清理安全、apply→clear 闭环、dry-run 不改系统）。
 - **preflight.sh**：能力探测在“探测项已存在（并发预检）”时不再误报失败；文档明确该脚本会临时增删一条测试路由并立即删除。
 - **文档同步**：requirements/test-plan/technical/plan/review-findings/user-manuals/faq/folder/README 全量对齐本轮改动。
 

@@ -74,6 +74,18 @@
 - 可从 CLI（`cli-netswitch.sh detect`）与 TUI（“重新探测网络”按钮）触发。
 - 默认只读（打印拟生成配置）；`--write` 才写回，且仅更新 `interfaces`，保留 `rules` 等其它配置。
 
+### FR10 — IPv6 分流（双栈）
+- 分流规则的 CIDR 来源可包含 **IPv6 网段**（如 GitHub `/meta` 中的 v6 记录），手动 `cidrs.extra` 中的 v6 网段同样生效。
+- 地址族可配：全局 `routing.ip_versions`（**默认 `["v4"]`，向后兼容**），可用 `rules[].cidrs.ip_versions` 按规则覆盖（例：只有某条规则走 v6，或某条规则只要 v4）。
+- IPv6 出口网关取自 `interfaces[].gateway6`，缺省从当前 v6 默认路由自动探测（常见为 `fe80::1` 链路本地地址，带 `dev` 使用）。
+- 三个后端均支持 v6：
+  - nftables：`ipv6_addr` 集合 + `ip6 daddr` 打标 + `ip -6 rule fwmark`；
+  - iprule：`ip -6 rule add to <v6-cidr>` + 独立表的 v6 默认/直连路由；
+  - mainroute：`ip -6 route replace <v6-cidr> via <gw6> dev <网卡> proto 200`。
+- **环境不具备 v6 时必须降级而非失败**：内核未启用 IPv6、出口网卡无 v6 网关、内核不支持 `CONFIG_IPV6_MULTIPLE_TABLES` 时，告警并跳过 v6，**v4 分流照常生效**。
+- 清理同样只删本程序产物：v6 明细路由按 `proto 200` + 出口网卡 + 地址族判定，不得删内核 v6 直连路由与他人 v6 静态路由；v6 的 `ip rule`/路由表按同一签名清理。
+- `status` 与 TUI 展示网卡 v6 地址/网关与每条规则参与的地址族。
+
 ## 4. 非功能需求（NFR）
 
 - **容器覆盖（强制）**：所有分流规则必须同时作用于主机本机与主机上所有容器（网络命名空间）的对外流量，缺一不可。
@@ -98,7 +110,7 @@
    - `docs/` 文档（requirements.md / technical.md / plan.md / changelog.md / review-findings.md / test-plan.md / user-manuals.md / folder.md / faq.md）；根 `README.md`
    - `data/config/` 配置文件
 3. 实现语言：Python 3（仅标准库）；TUI：curses；配置格式：JSON。
-4. v1 范围：仅 IPv4；IPv6 分流留待后续。
+4. 地址族：支持 IPv4 / IPv6 双栈；`routing.ip_versions` 默认 `["v4"]`（与升级前行为一致），需要时可开启 v6。
 5. 分流规则通用化：脚本/模块/配置键不得硬编码 `github`；初始默认规则名为 `github`。
 
 ## 6. 验收标准
@@ -118,4 +130,8 @@
 - [ ] 脚本与 TUI 对同一操作产生相同结果。
 - [ ] 配置为空/缺字段时自动探测，程序不报错。
 - [ ] 在新机器上运行 detect 能正确识别物理网卡并生成配置；`rules` 等其它配置不被覆盖。
+- [ ] 未写 `routing.ip_versions` 时行为与升级前完全一致（仅 v4；v6 网段被忽略）。
+- [ ] 配置 `routing.ip_versions: ["v4","v6"]` 且出口网卡有 v6 网关时，apply 后 v6 目标流量走指定网卡，v4 行为不变。
+- [ ] 环境不具备 v6（未启用 IPv6 / 无 v6 网关 / 无 v6 策略路由）时，apply 仍成功且 v4 分流正常，告警说明 v6 已跳过。
+- [ ] 清理不会删除内核 v6 直连路由或他人 v6 静态路由。
 - [ ] 非 root 运行被拒绝且提示明确。

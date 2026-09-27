@@ -146,14 +146,17 @@ switch/
 |------|------|------|
 | `interfaces` | 自动探测物理网卡 | 探测不到时要求显式配置 |
 | `interface.gateway` | 当前默认路由网关 | 从 `ip -j route` 解析 |
+| `interface.gateway6` | 当前 v6 默认路由网关 | 从 `ip -6 -j route` 解析（常为 `fe80::1`） |
 | `interface.metric` | 无 | 不填则 apply 不调整该网卡 |
 | `metrics.preferred` | 100 | `metric primary` 给优先网卡 |
 | `metrics.fallback` | 600 | `metric primary` 给其余网卡 |
 | `routing.backend` | auto | `auto` → 不支持策略路由用 `mainroute`；否则有 `nft` 用 nftables，否则 iprule |
 | `routing.nft_table` | netswitch | nft 表名 |
+| `routing.ip_versions` | `["v4"]` | 参与分流的地址族：`v4` / `v6`（默认仅 v4，向后兼容） |
 | `rule.enabled` | true | |
 | `rule.interface` | 无（必填） | 空 = 该规则不生效 |
 | `rule.cidrs.source` | url | |
+| `rule.cidrs.ip_versions` | 无（跟随 `routing.ip_versions`） | 规则级地址族覆盖 |
 | `rule.cidrs.ttl_hours` | 24 | |
 | `rule.cidrs.cache_file` | `data/config/cache-<规则名>.json` | 内部自动（必须位于数据目录内） |
 | `rule.table_id` | 200 + 规则序号 | 自动保证唯一；**取值限定 200..252** |
@@ -173,6 +176,8 @@ switch/
 | `rules[].table_id` | 200..252 | 253/254/255 是内核保留的 default/main/local，误用会 `flush` 主表 |
 | `rules[].fwmark` | 1..0xFFFFFFFF | 0 无法用于打标 |
 | `rules[].cidrs.source` | `url` / `manual` | 未知来源直接报错 |
+| `routing.ip_versions` / `cidrs.ip_versions` | 只允许 `v4`/`v6`，非空且不重复 | 地址族白名单 |
+| `interfaces[].gateway` / `gateway6` | 必须是 IPv4 / IPv6 地址（`gateway6` 允许 `fe80::1%eth0` 带 zone） | 避免把域名或错位的族写进 `ip route ... via` |
 | `state_file` / `cache_file` | 解析后必须位于数据目录（默认 `<仓库>/data`）内 | 这些路径由 root 写入，防越权写文件（可用 `NETSWITCH_DATA_DIR` 覆盖数据目录） |
 
 ### 3.3 状态文件（state.json，运行时生成）
@@ -385,6 +390,37 @@ CLI 与 TUI 均触发同一探测逻辑（`detect.py`）。`detect` 输出中的
 - **路径**：`state_file` 与 `cidrs.cache_file` 解析后必须位于**数据目录**（默认 `<仓库>/data`，可用 `NETSWITCH_DATA_DIR` 覆盖）内，拒绝绝对路径越界与 `..` 穿越——这两个文件是由 root 写入的，旧实现可被配置指向 `/etc/...`。相对路径统一按**仓库根**解析（与 `log.py` 一致），不再随当前工作目录漂移。
 - **威胁模型**：仓库/配置目录可能由普通用户拥有，而 `apply` 由 `sudo`/systemd 以 root 运行。除上述校验外，建议 `data/config/config.json` 设为 `root:root 0600`。
 
+### 4.8 IPv6 分流（双栈）
+
+同一套规则可按地址族分别应用，目标是“能用 v6 就分流 v6，用不了就不影响 v4”。
+
+**地址族来自哪里**：`rules[].cidrs.ip_versions`（无则用全局 `routing.ip_versions`，默认 `["v4"]`）。CIDR 源（URL / `extra`）现在同时保留 v4 与 v6（`cidrs._finish` 不再丢弃 v6），由 `routing` 按规则声明的族筛选。
+
+**应用（per rule × per family 的 `FamilyPlan`）**：`preflight` 阶段为每条规则的每个地址族解析出 `(family, cidrs, gateway, src, subnet)`：
+
+| 后端 | IPv4（原有） | IPv6（新增） |
+|------|--------------|---------------|
+| nftables | `set <rule>_v4 { type ipv4_addr; ... }` + `ip daddr @set meta mark ...` | `set <rule>_v6 { type ipv6_addr; ... }` + `ip6 daddr @set meta mark ...`（仍是一个 `table inet`，整表加载） |
+| nftables（选表） | `ip rule add fwmark 0xN lookup T pref P` | `ip -6 rule add fwmark 0xN lookup T pref P` |
+| iprule | `ip rule add to <cidr> lookup T pref P` | `ip -6 rule add to <cidr> lookup T pref P`；独立表内补 `ip -6 route add default via <gw6> dev <if> table T` 与 v6 直连路由 |
+| mainroute | `ip route replace <cidr> via <gw> dev <if> proto 200` | `ip -6 route replace <cidr> via <gw6> dev <if> proto 200` |
+
+**v6 网关**：优先 `interfaces[].gateway6`，否则取该网卡当前 v6 默认路由的网关（`ip -6 -j route show default`，常见 `fe80::1`；链路本地网关必须带 `dev`，我们的命令里总是带），同一网卡多条时取 metric 最小者。
+
+**降级规则（不阻断）**：
+
+| 情况 | 行为 |
+|------|------|
+| `ip.family_available(6)` 为假（内核未启用/命名空间不支持 IPv6） | 告警跳过 v6 |
+| 出口网卡无 v6 网关且配置未指定 `gateway6` | 告警跳过 v6 |
+| iprule/nftables 后端且 `policy_routing_supported(6)` 为假（缺 `CONFIG_IPV6_MULTIPLE_TABLES`） | 告警跳过 v6 |
+| 上述任一情况发生在**只声明 v6** 的规则上 | 该规则整体跳过（告警），其它规则不受影响 |
+| `mainroute` 后端 | 不依赖策略路由，上述第三条不适用 |
+
+**清理**：`main_table_routes(family)` 分别读两族主表，只删 `proto 200` + 出口网卡匹配的条目（`ip -6 route del ... proto 200 ...`）；`ip rule` 与派生路由表按 `pref ∈ [20000,32000)` + 派生表号逐族清理（`ip -6 rule del` / `ip -6 route flush table N`）。因是两套独立规则库，优先缀计数器在两族间共用以简化实现，但“上限校验”按族分别计算。
+
+**已知局限**：v6 分流同样只能按网段匹配（不做域名）；上游给 IPv6 记录时可能同时给 v4，两者可独立开关；若只有链路本地地址（无全局 v6 地址），则不参与分流（不能作为源地址）。
+
 ## 5. 安全与健壮性
 
 | 措施 | 说明 |
@@ -394,6 +430,7 @@ CLI 与 TUI 均触发同一探测逻辑（`detect.py`）。`detect` 输出中的
 | 操作确认 | 网卡开关 / 转换 / 规则改写等破坏性操作需确认（TUI 提示 `y`；CLI `-y/--yes` 跳过，非交互需 `-y`） |
 | 最后网卡保护 | 仅一张网卡生效（唯一承载默认路由）时禁止关闭它；`--force` 为显式应急覆盖 |
 | 只删自己的产物 | 清理按签名识别：nft 表名、主表 `proto 200` 明细路由（且出口网卡匹配）、`pref ∈ [20000, 32000)` 的 `ip rule` 与派生表号；不碰内核直连路由/他人静态路由 |
+| 双栈降级 | 某地址族不可用（内核未启用 v6 / 无 v6 网关 / 无 v6 策略路由）时**告警并跳过该族**，其余族照常应用；不会因此整体失败 |
 | 出口网卡检查 | 出口网卡**不存在** → 预检直接拒绝（零改动）；网卡不是物理网卡或**当前未连接** → 告警并仍按配置应用（无线可能稍后才关联） |
 | 先校验后改动 | `preflight()` 全部通过才清理重建；网卡不存在、网关不可解、CIDR 非法、`ip rule` 超上限均直接拒绝，且**零改动** |
 | 失败回滚 | 重建中出错则 best-effort 清理已建产物后抛出，不留半成品状态 |
@@ -448,6 +485,7 @@ tui-netswitch.sh                                   # 启动 TUI（scripts 便捷
   - **被禁止 / 不可用**（管理关闭 admin-down，或未插网线）→ **红色**
   - 数字 `1`…`N` 选中后：`o` 关闭/开启（按**管理状态**判断）、`m` 设为主网卡、`t` 改 metric。
   - 无线网卡额外显示当前 **SSID**（未连接显示 `-`；由 `iw dev <if> link` 获取，回退 `iwgetid -r`）。
+  - 网卡有 IPv6 地址时额外显示 `6=<v6 地址>`；规则的「生效网卡」在参与 v6 分流时附加 `(v4+v6)` 标记。
 - **规则区**：列出配置中的每条规则，显示**生效网卡**与是否**已应用**；规则**生效**时其「生效网卡」显示为**黄色**。`g` 切换选中规则、`e` 选生效网卡、`p` 应用、`c` 撤销。
   - `e`：弹出网卡序号列表，选择后**写回 `config.json`**（持久化）并重建策略路由；`0` = 不分流。
   - `c`：撤销该规则的分流（清空其 `interface` 并**写回 `config.json`**）。
@@ -504,11 +542,13 @@ WantedBy=multi-user.target
 |------|------|----------|
 | `ip`（iproute2） | 路由/网卡操作 | 必需 |
 | 内核策略路由（`CONFIG_IP_MULTIPLE_TABLES`） | 自定义路由表 + `ip rule`（分流必需） | 必需（分流功能） |
+| IPv6 支持（启用 IPv6 + `CONFIG_IPV6_MULTIPLE_TABLES`） | v6 分流（`ip -6 rule` / `ip -6 route ... table N`） | 可选（仅 v6 分流需要；缺失时自动跳过 v6） |
 | `nft`（nftables） | 后端 A | 可选，缺省回退 iprule |
 | Python 3.9+（标准库） | 运行（json / curses / ipaddress） | 必需 |
 
 > 无第三方 Python 运行时依赖（不依赖 PyYAML、textual）。
 > 若内核未启用 `CONFIG_IP_MULTIPLE_TABLES`（或在受限容器/gVisor 中运行），`ip route ... table N` / `ip rule` 会报 `RTNETLINK answers: Operation not supported`，此时**无法分流**（可在 `preflight.sh` 的「策略路由能力」项确认）。
+> IPv6 同理对应 `CONFIG_IPV6_MULTIPLE_TABLES`：不影响 v4 分流，只是 v6 部分会被跳过并告警（`mainroute` 后端不依赖多路由表，即使 v6 策略路由不可用也能做 v6 明细路由分流）。
 
 ## 10. 错误处理
 

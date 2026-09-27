@@ -128,10 +128,12 @@ cp data/config/config.example.json data/config/config.json
 | 字段 | 说明 |
 |------|------|
 | `interfaces[].name` | 物理网卡名；整个 `interfaces` 可省略（缺省自动探测） |
-| `interfaces[].gateway` | 网关；缺省自动探测 |
+| `interfaces[].gateway` | IPv4 网关；缺省自动探测 |
+| `interfaces[].gateway6` | IPv6 网关；缺省自动探测（常见 `fe80::1`，支持 `fe80::1%网卡名`） |
 | `interfaces[].metric` | 希望设定的 metric；缺省不调整 |
 | `metrics.preferred` / `fallback` | `metric primary` 用：主网卡 / 其余网卡的值（默认 100 / 600） |
 | `routing.backend` | 分流后端：`auto` / `nftables` / `iprule` / `mainroute`（`auto` 在不支持策略路由时自动回退 `mainroute`） |
+| `routing.ip_versions` | 参与分流的地址族，默认 `["v4"]`；双栈写 `["v4","v6"]`（详见 §3.4 与场景 H） |
 | `routing.nft_table` | nft 表名（默认 `netswitch`） |
 | `rules[].name` | 规则唯一名（任意，如 `github`） |
 | `rules[].enabled` | 是否启用（默认 `true`） |
@@ -145,6 +147,24 @@ cp data/config/config.example.json data/config/config.json
 ### 3.3 新增一条分流规则
 
 在 `rules` 下复制一段，改 `name` / `url` / `fields` / `interface` 即可（`table_id`/`fwmark` 不填会自动避让），**无需改程序**。也可以先只写 `name`，稍后在 TUI 里用 `e` 选择生效网卡。
+
+### 3.4 开启 IPv6 分流
+
+1. 确认出口网卡有 IPv6：`ip -6 addr show <网卡>`、`ip -6 route show default`（网关常见为 `fe80::1`）。
+2. 在配置里开启地址族：
+
+```json
+"routing": { "ip_versions": ["v4", "v6"] }
+```
+
+3. apply（`sudo scripts/cli-netswitch.sh apply`）后，`status` 应显示规则行 `族=v4+v6`，网卡行显示 `IPv6=`。
+
+要点：
+- 默认 `["v4"]`：不写这一项时行为与升级前完全一致（IPv6 网段被忽略）。
+- 可以按规则控制，例如只让 `github` 走 v6：
+  `"cidrs": { "ip_versions": ["v6"] }`（覆盖全局）。
+- 若某张网卡需要显式指定网关：`"gateway6": "fe80::1"`（也支持 `fe80::1%网卡名` 写法）。
+- **用不了就跳过**：系统未启用 IPv6、网卡无 v6 网关、或内核不支持 `CONFIG_IPV6_MULTIPLE_TABLES` 时，只告警跳过 v6，**v4 分流照常生效**（`mainroute` 后端即使没有 v6 策略路由也能分流 v6）。
 
 ## 4. 常用命令与按键速查
 
@@ -259,6 +279,17 @@ scripts/cli-netswitch.sh detect --write    # 确认后写回（只更新 interfa
 scripts/cli-netswitch.sh apply
 ```
 
+### 场景 H：只想让 GitHub（含 IPv6）走指定网卡
+```bash
+# 1) 配置里开启双栈："routing": { "ip_versions": ["v4","v6"] }
+# 2) 探测并写回（会顺带记录各网卡的 gateway6）
+sudo scripts/cli-netswitch.sh detect --write
+# 3) 应用 + 看结果（规则行会显示 族=v4+v6）
+sudo scripts/cli-netswitch.sh apply
+scripts/cli-netswitch.sh status
+```
+无 IPv6 环境时同样可以执行：日志/告警会写“已跳过 IPv6 分流”，v4 部分不受影响。
+
 ## 6. 日志与排查
 
 ### 6.1 运行日志
@@ -276,7 +307,18 @@ scripts/cli-netswitch.sh apply
 2. `sysctl net.ipv4.conf.all.rp_filter` 应为 `0` 或 `2`（严格模式会丢弃跨网卡转发的包）；
 3. 容器网络若有 `-o <网卡> -j MASQUERADE` 显式规则，需覆盖目标出口网卡；
 4. 用 `ip route get <目标IP> from <容器IP> iif <网桥名>` 观察路由走向；
-5. `scripts/cli-netswitch.sh status` 查看规则的「生效网卡 / 是否已应用」。
+5. `scripts/cli-netswitch.sh status` 查看规则的「生效网卡 / 地址族 / 是否已应用」。
+
+### 6.2b IPv6 没走指定网卡？
+
+按顺序排查：
+
+1. `ip -6 route show default` 是否存在（没有 v6 默认路由就没法分流 v6）；
+2. 出口网卡是否有**全局** v6 地址（`ip -6 addr show <网卡>`；只有 `fe80::` 链路本地地址不算）；
+3. 配置里是否开了 `routing.ip_versions: ["v4","v6"]`（默认只有 v4）；
+4. 规则的目标网段是否真的包含 v6（`status` 里看该规则缓存：`data/config/cache-<规则名>.json` 是否含 `:`）；
+5. 日志/告警里是否出现“…已跳过 IPv6 分流”（说明环境不具备 v6，属于预期降级）；
+6. nftables/iprule 后端还需内核支持 `CONFIG_IPV6_MULTIPLE_TABLES`（`mainroute` 不需要）。
 
 ### 6.3 完全恢复
 

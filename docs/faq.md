@@ -115,3 +115,17 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 `sudo` 运行**没问题**（`euid=0`，权限检查通过；`SUDO_USER` 会显示你的登录名）。两点注意：
 - **写操作必须 sudo**（非 root 运行 TUI/CLI 会明确提示；TUI 标题会显示「⚠ 非root·只读」）。
 - 用 sudo 跑过后，`data/config/*`、`logs/*` 会变成 **root 所有**；日志写不进去时程序会自动回退到用户可写目录（不会静默丢失），但 `data/config/config.json` 仍需 root 才能写回（`detect --write` / TUI 改配置）。建议**统一用 sudo**，或 `sudo chown -R "$USER" data logs` 修回所有权。
+
+## IPv6（双栈）
+
+**Q25：为什么 IPv6 流量没走指定网卡？**
+本程序默认**只分流 IPv4**（`routing.ip_versions` 默认 `["v4"]`，为了不改变升级前的行为）。开启方式与限制见 [user-manuals.md](user-manuals.md)（§3.4 开启 IPv6 分流）。常见原因：
+- **没开双栈**：配置里加 `"routing": { "ip_versions": ["v4", "v6"] }` 后重新 `apply`；
+- 出口网卡没有 v6 默认路由（`ip -6 route show default`），或只有 `fe80::` 链路本地地址（不能作为分流源地址）；
+- 内核缺 `CONFIG_IPV6_MULTIPLE_TABLES`（仅 nftables/iprule 后端需要；`mainroute` 后端不需要）；
+- 规则的 CIDR 源里本来就没有 v6 网段（`status` 中规则行的“族”列能看出该规则参与哪些族）。
+
+以上环境不具备的情况都只是**告警并跳过 v6**，IPv4 分流不受影响；告警会出现在 `logs/netswitch.log` 与 TUI/CLI 的提示行。
+
+**Q26：能不能只让某一条规则走 IPv6？**
+可以。在该规则的 `cidrs` 里加 `"ip_versions": ["v6"]`（或 `["v4","v6"]`），它会覆盖全局 `routing.ip_versions`。若该规则只声明 `v6` 而环境没有 v6，这条规则会被整体跳过并告警，其它规则不受影响。

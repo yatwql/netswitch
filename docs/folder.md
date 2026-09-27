@@ -47,13 +47,13 @@ switch/
 | `version.py` | 版本号与构建信息（唯一来源）：`__version__`、程序更新时间 |
 | `exec.py` | 命令执行封装：root 检查、dry-run、`ExecError` 统一错误 |
 | `log.py` | 运行日志：首选 `logs/netswitch.log`（按大小轮转），不可写时自动回退到用户可写目录 |
-| `model.py` | 数据模型：`Interface`/`IfaceCfg`/`RuleCfg`/`CidrsCfg`/`Config`/`MetricsCfg`/`RoutingCfg` dataclass |
+| `model.py` | 数据模型：`Interface`（含 `ip6`/`gateway6`）/`IfaceCfg`/`RuleCfg`/`CidrsCfg`（含 `ip_versions`）/`Config`/`MetricsCfg`/`RoutingCfg` dataclass |
 | `config.py` | JSON 配置加载、默认值填充、探测填充、**白名单校验**（标识符/表号/fwmark/路径）、`interfaces` 写回 |
-| `detect.py` | 网络自动探测：物理网卡识别（sysfs 优先）、有线/无线、连接状态、IP/网关/metric |
-| `ip.py` | `ip -j` 命令解析与命令构造、物理网卡/连接状态判定、只读能力探测、表号/proto/pref 常量 |
+| `detect.py` | 网络自动探测：物理网卡识别（sysfs 优先）、有线/无线、连接状态、IPv4/IPv6 地址与网关 |
+| `ip.py` | `ip -j` 命令解析与命令构造、物理网卡/连接状态判定、只读能力探测（含地址族）、表号/proto/pref 常量 |
 | `iface.py` | 网卡开关（最后网卡保护）与 metric 调整（set/primary；先清全部默认路由再建） |
-| `cidrs.py` | 通用 CIDR 来源：URL+JSON 字段拉取（体量上限）、缓存、extra 合并、规范化与非法项告警 |
-| `routing.py` | 分流规则策略路由：nftables/iprule/mainroute 三后端、预检→重建→失败回滚、按签名安全清理 |
+| `cidrs.py` | 通用 CIDR 来源：URL+JSON 字段拉取（体量上限）、缓存、extra 合并、规范化与非法项告警（IPv4 + IPv6） |
+| `routing.py` | 分流规则策略路由：nftables/iprule/mainroute 三后端、v4/v6 双栈、预检→重建→失败回滚、按签名安全清理 |
 | `status.py` | 状态汇总与展示（网卡/默认路由/规则） |
 | `apply.py` | apply/revert 编排、state.json 记录与恢复 |
 | `cli.py` | argparse 命令行入口（status/detect/iface/metric/rule/apply/revert/install-systemd） |
@@ -65,7 +65,7 @@ switch/
 |------|------|
 | `conftest.py` | 把 `src/python` 加入 `sys.path`，便于 import netswitch |
 | `test_config.py` | 配置加载/默认值/唯一性校验/冲突校验/规则网卡写回 |
-| `test_detect.py` | 主网卡判定 |
+| `test_detect.py` | 主网卡判定、v4/v6 地址与网关探测、链路本地地址处理、配置片段生成 |
 | `test_ip.py` | 物理网卡识别、subnet、nft-set 命名、连接状态判定 |
 | `test_iface.py` | metric 命令构造、最后网卡保护、up/down |
 | `test_cidrs.py` | manual/url 来源、缓存回退、IPv4 过滤 |
@@ -76,7 +76,7 @@ switch/
 | `test_log.py` | 日志写入、命令记录、目录不可写时回退 |
 | `test_cli.py` | 命令行解析、确认逻辑、参数错误、systemd 单元模板校验 |
 | `test_status.py` | 状态输出健壮性（单条规则查询失败不崩）、主表快照复用 |
-| `test_integration_netns.py` | netns 集成（`unshare -rn`，无需 root）：清理不误删、apply/clear 闭环、dry-run 不改系统 |
+| `test_integration_netns.py` | netns 集成（`unshare -rn`，无需 root）：v4/v6 清理不误删、apply/clear 闭环、dry-run 不改系统 |
 
 ## 5. scripts/ —— 脚本
 

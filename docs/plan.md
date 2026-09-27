@@ -66,6 +66,13 @@
 - [x] systemd 单元修正（参数顺序 + 配置路径 + WorkingDirectory）并加解析校验
 - [x] 工程化：CI 改跑 `scripts/check.sh` + 多版本矩阵；`check-docs.sh` 增加 folder.md 覆盖与 changelog 门禁；新增 `pyproject.toml`
 
+### M7 — IPv6 双栈分流（已完成，FR10）
+- [x] CIDR 数据层保留并规范化 v6；`routing.ip_versions` / `rules[].cidrs.ip_versions` 地址族开关
+- [x] 探测与配置支持 v6（`Interface.ip6` / `gateway6`、`ip -6` 只读能力探测、`detect --write` 写出 `gateway6`）
+- [x] 三后端 v6 支持（nftables `ip6 daddr` / iprule `ip -6 rule` / mainroute `ip -6 route ... proto 200`）与按签名清理
+- [x] 降级策略（无 v6 网关 / 未启用 IPv6 / 无 v6 策略路由 → 告警跳过 v6，v4 不受影响）
+- [x] status/TUI 展示 v6 地址、网关与规则地址族；netns 集成用例（I-12/I-13）
+
 ### M5 — 文档与验收
 - [x] 更新 changelog / review-findings
 - [x] 校验 docs/ 全部文档与实现一致（含 user-manuals / readme 索引）
@@ -85,6 +92,6 @@
 
 ## 5. 当前状态
 
-- 阶段：M1~M4、M6 完成；M5 文档已同步，剩「目标机验收」。
-- 测试：**160 个用例通过**（`scripts/run-test.sh`），含 3 个 netns 集成用例（`unshare -rn`，无需 root）。
-- 下一步：在目标机上跑 `preflight.sh` → `detect --write` → `apply --dry-run` → 真实验收；补充容器转发/NAT 的 netns 用例（I-05~I-07）。
+- 阶段：M1~M4、M6、M7 完成；M5 文档已同步，剩「目标机验收」。
+- 测试：**218 个用例通过**（`scripts/run-test.sh`），含 5 个 netns 集成用例（`unshare -rn`，无需 root）。
+- 下一步：在目标机上跑 `preflight.sh` → `detect --write` → `apply --dry-run` → 真实验收；补充容器转发/NAT 的 netns 用例（I-05~I-07）与 v6 真机验收。

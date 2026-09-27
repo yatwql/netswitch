@@ -26,7 +26,7 @@
 - 单元/命令构造：普通用户即可，无需 root。
 - 集成：`unshare -rn`（非特权 user namespace）+ `iproute2`；用 `pytest.mark.integration` 标记，环境不支持时自动 skip。
 - 依赖注入：monkeypatch 替换 `iproute2` 查询与命令执行器，断言命令序列、校验副作用边界。
-- 当前规模：**160 个用例通过**（含 3 个 netns 集成用例），全部无需 root。
+- 当前规模：**218 个用例通过**（含 5 个 netns 集成用例），全部无需 root。
 
 ## 4. 测试用例清单
 
@@ -62,6 +62,9 @@
 | T-config-15 | P0 | `state_file`/`cache_file` 越界（`/etc/...`、`../`） | 报错（数据目录约束） |
 | T-config-16 | P1 | 相对路径解析 | 按仓库根解析为绝对路径，不随 CWD 漂移 |
 | T-config-17 | P1 | 传入 `probe_map` 快照 | 不再执行 `ip` 探测命令 |
+| T-config-18 | P0 | `routing.ip_versions` 缺省/双栈/规则级覆盖 | 默认 `["v4"]`；规则级优先 |
+| T-config-19 | P0 | `ip_versions` 非法（`v5`/空/重复/字符串） | 报错 |
+| T-config-20 | P0 | `gateway6` 校验 | 必须是 IPv6（允许 `fe80::1%eth0`）；写成 v4 地址报错；`gateway` 写成 v6 也报错 |
 
 ### 4.3 ip.py — ip 输出解析与命令构造
 
@@ -75,6 +78,9 @@
 | T-ip-06 | P0 | 能力探测（非 root） | 返回“未知”（None），不谎报支持 |
 | T-ip-07 | P0 | `rule_pref` 超出上限 | 报错（不撞内核默认 `pref 32766`） |
 | T-ip-08 | P0 | 物理网卡识别 | VLAN 子接口/`dummy`/`wg`/`ppp`/`macvlan` 不算物理；sysfs `device` 节点优先 |
+| T-ip-09 | P0 | 地址族参数与命令 | `family_args(4)==[]`（不改变既有 v4 命令）、`(6)==["-6"]`；`route_list(6)`/`rule_list(6)` 生成 `ip -6 -j ...` |
+| T-ip-10 | P0 | v6 可用性/能力探测 | `family_available(6)` 只读探测；不支持时 `policy_routing_supported(6)` 返回 False；非 root 返回 None |
+| T-ip-11 | P1 | nft set 名按族 | `github_v4` / `github_v6` |
 
 ### 4.4 iface.py — 网卡开关 / metric（FR1/FR2）
 
@@ -98,8 +104,9 @@
 | T-cidrs-03 | P0 | 缓存未过期 | 不重复请求 |
 | T-cidrs-04 | P0 | `extra` 合并 | 与来源 CIDR 合并去重 |
 | T-cidrs-05 | P0 | `source: manual` | 仅用 `extra` |
-| T-cidrs-06 | P0 | 非法 CIDR（域名、`1.2.3.4/999`、IPv6） | 丢弃并告警；网络地址归一化（`1.2.3.4/24`→`1.2.3.0/24`） |
+| T-cidrs-06 | P0 | 非法 CIDR（域名、`1.2.3.4/999`） | 丢弃并告警；网络地址归一化（`1.2.3.4/24`→`1.2.3.0/24`） |
 | T-cidrs-07 | P0 | 响应非 JSON 对象 / 超过 8MB / `fields` 为空 | 报错并走缓存回退 |
+| T-cidrs-08 | P0 | IPv6 CIDR | 保留并规范化（`2001:db8:99::5/48`→`2001:db8:99::/48`）；`split_families` 拆分正确 |
 
 ### 4.6 routing.py — 分流规则（FR3）
 
@@ -120,6 +127,13 @@
 | T-route-13 | P1 | 同一 CIDR 源一次 apply | 只拉取一次（每条规则一次） |
 | T-route-14 | P0 | 切换后端后清理 | 即使当前不是 nftables 后端，也会删历史 nft 表 |
 | T-route-15 | P1 | 出口网卡未连接/非物理 | 告警并继续应用（不阻断） |
+| T-route-16 | P0 | 地址族解析 | 默认 `(4,)`；全局双栈 `(4,6)`；规则级覆盖 `(6,)` |
+| T-route-17 | P0 | v6 mainroute | `ip -6 route replace <v6> … proto 200` |
+| T-route-18 | P0 | v6 iprule | `ip -6 route add default … table T` + `ip -6 rule add to <v6> …` |
+| T-route-19 | P0 | v6 nftables | `github_v6` 集合 + `ip6 daddr` + `ip -6 rule add fwmark` |
+| T-route-20 | P0 | v6 降级（不可用/无网关/无 v6 策略路由） | 告警跳过 v6，**v4 仍生效**；只声明 v6 的规则整体跳过 |
+| T-route-21 | P0 | v6 清理 | `ip -6 route del … proto 200 …`；v6 不可用时不发任何 `-6` 命令 |
+| T-route-22 | P0 | 无 table_id/fwmark 的手工 Config | 预检报清晰错误（不再 `TypeError`） |
 
 ### 4.7 apply.py — 编排 / revert（FR7）
 
@@ -172,6 +186,9 @@
 | T-detect-07 | P0 | 连接状态判定 | operstate/NO-CARRIER → 已连接/未插网线/未有连接 |
 | T-detect-08 | P1 | 网卡数量不固定（1~3） | 按实际探测数量返回 |
 | T-detect-09 | P1 | 同一网卡多条默认路由 | 取 metric 最小者 |
+| T-detect-10 | P0 | v6 地址/网关探测 | 填 `ip6`/`gateway6`；仅链路本地时 `ip6` 为 None |
+| T-detect-11 | P0 | 系统未启用 IPv6 | 不执行任何 `ip -6` 查询，字段留空 |
+| T-detect-12 | P1 | `detect --write` 片段 | 含 `gateway6`（探测到时） |
 
 ### 4.11 status.py / log.py
 
@@ -180,6 +197,7 @@
 | T-status-01 | P1 | 单条规则状态查询失败 | 打印失败原因，其余部分照常输出 |
 | T-status-02 | P1 | `mainroute` 后端多规则 | 主表只 dump 一次（结果复用） |
 | T-status-03 | P1 | 非 root | 提示“策略路由能力未确认”并显示日志路径 |
+| T-status-04 | P1 | 双栈展示 | 网卡行含 `IPv6=`/`网关6=`，规则行含 `族=v4+v6`；系统无 v6 时提示“IPv6: 不可用” |
 | T-log-01 | P0 | 首选目录不可写 | 自动回退到用户可写目录并在 stderr 提示 |
 | T-log-02 | P1 | 启动行 | 含版本、主机名、发起用户 |
 
@@ -200,6 +218,8 @@
 | I-09 | P0 | 清理只删 `proto 200` | `proto static` 与 `proto kernel` 路由原样保留；自己的路由被清掉 | **已自动化** |
 | I-10 | P0 | mainroute apply→clear 闭环 | veth + 网关下 `ip route replace` 生效（`proto 200`、dev 正确），清理后消失且直连子网路由保留 | **已自动化** |
 | I-11 | P0 | dry-run 不改系统 | 能力探测与 `clear_rules(dry_run=True)` 前后 `ip -j route` 完全一致 | **已自动化** |
+| I-12 | P0 | v6 清理只删 `proto 200` | v6 主表中他人的 `proto static` 路由保留；自己的 v6 路由被清掉 | **已自动化** |
+| I-13 | P0 | v6 mainroute apply→clear 闭环 | `ip -6 route replace … proto 200` 生效（dev 正确），清理后消失且 v6 直连子网路由保留 | **已自动化** |
 
 ## 6. 手动验收清单（目标机）
 
