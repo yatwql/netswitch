@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netswitch"
+description = "多物理网卡切换与流量分流工具（零第三方运行时依赖）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dynamic = ["version"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: System :: Networking",
+  "Environment :: Console :: Curses",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-mock>=3.10"]
+
+[project.scripts]
+netswitch = "netswitch.cli:main"
+netswitch-tui = "netswitch.tui:run"
+
+[tool.setuptools]
+package-dir = { "" = "src/python" }
+packages = ["netswitch"]
+
+# 版本号唯一来源仍是 src/python/netswitch/version.py（AGENTS.md）；
+# 打包时 PEP 440 会把开发版 0.2-dev 规范化为 0.2.dev0。
+[tool.setuptools.dynamic]
+version = { attr = "netswitch.version.__version__" }

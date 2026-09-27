@@ -155,17 +155,29 @@ switch/
 | `rule.interface` | 无（必填） | 空 = 该规则不生效 |
 | `rule.cidrs.source` | url | |
 | `rule.cidrs.ttl_hours` | 24 | |
-| `rule.cidrs.cache_file` | `data/config/cache-<规则名>.json` | 内部自动 |
-| `rule.table_id` | 200 + 规则序号 | 自动保证唯一 |
-| `rule.fwmark` | 1 + 规则序号 | 自动保证唯一 |
+| `rule.cidrs.cache_file` | `data/config/cache-<规则名>.json` | 内部自动（必须位于数据目录内） |
+| `rule.table_id` | 200 + 规则序号 | 自动保证唯一；**取值限定 200..252** |
+| `rule.fwmark` | 1 + 规则序号 | 自动保证唯一；**取值限定 1..0xFFFFFFFF** |
 | `rule.nft_set` / `rule.rule_pref` | `<规则名>_v4` / 20000+序号 | 内部自动 |
-| `state_file` | `data/config/state.json` | |
+| `state_file` | `data/config/state.json` | 必须位于数据目录内 |
 
 > 扩展方式：新增一条规则只需在 `rules` 列表加一段（不同 `name`/`url`/`fields`/`interface`），程序无需改动；`table_id`/`fwmark` 不填会自动避让。
 
+**取值约束与校验**（加载时硬校验，非法配置直接拒绝启动，详见 §4.7）：
+
+| 字段 | 约束 | 理由 |
+|------|------|------|
+| `routing.backend` | `auto` / `nftables` / `iprule` / `mainroute` | 拼错不再静默回退 |
+| `routing.nft_table` | `[A-Za-z0-9_]{1,32}` | 会被拼进 `nft -f` 脚本，防注入 |
+| `rules[].name` | `[A-Za-z0-9_.-]{1,32}`，且归一化后不得重名 | set 名由规则名派生，重名会让整表失败 |
+| `rules[].table_id` | 200..252 | 253/254/255 是内核保留的 default/main/local，误用会 `flush` 主表 |
+| `rules[].fwmark` | 1..0xFFFFFFFF | 0 无法用于打标 |
+| `rules[].cidrs.source` | `url` / `manual` | 未知来源直接报错 |
+| `state_file` / `cache_file` | 解析后必须位于数据目录（默认 `<仓库>/data`）内 | 这些路径由 root 写入，防越权写文件（可用 `NETSWITCH_DATA_DIR` 覆盖数据目录） |
+
 ### 3.3 状态文件（state.json，运行时生成）
 
-`apply` 前记录每张网卡当前的默认路由（gateway/dev/metric/src）与已应用的分流规则；`revert` 据此恢复。
+`apply` **首次**执行时记录每张网卡当前的默认路由（gateway/dev/metric/src）、已应用规则、后端与派生路由表号；`revert` 据此恢复。
 
 ```json
 {
@@ -174,9 +186,18 @@ switch/
     {"dev": "enp2s0", "gateway": "192.168.2.1", "metric": 100, "src": "192.168.2.175"},
     {"dev": "wlp129s0", "gateway": "192.168.1.1", "metric": 600, "src": "192.168.1.7"}
   ],
-  "applied_rules": ["github"]
+  "applied_rules": ["github"],
+  "backend": "nftables",
+  "tables": [200]
 }
 ```
+
+要点：
+
+- **`original_defaults` 只在首次记录，后续 apply 不覆盖**：否则第二次 apply 抓到的“原始值”已被自己改过，`revert` 会恢复不回去。
+- `tables` / `backend` 用于清理“改配置/改后端之前”遗留的 `ip rule` 与派生路由表。
+- `revert` 成功后删除该文件，下一次 `apply` 重新建立基线（此时抓到的就是恢复后的真实值）。
+- 文件损坏 / 非 JSON 对象时按“无记录”处理并告警，不阻塞流程。
 
 ## 4. 核心机制
 
@@ -212,8 +233,10 @@ ip route add default via 192.168.2.1 dev enp2s0 metric 200
 ```
 
 - 网关来自配置或当前路由探测；先读后删再建。
-- `metric set <iface> <n>`：设为指定值（运行时一次性）。
-- `metric primary <iface>`：该网卡设为 `metrics.preferred`（默认 100），其余物理网卡设为 `metrics.fallback`（默认 600，多张时可能同值）。
+- **该网卡的所有默认路由都会被清掉**（可能因不同 metric / 不同来源有多条），避免残留重复默认路由。
+- `metric set <iface> <n>`：设为指定值（运行时一次性；**`<n>` 必填**，缺失时 CLI 直接报错退出 2）。
+- `metric primary <iface>`：该网卡设为 `metrics.preferred`（默认 100），其余物理网卡设为 `metrics.fallback`（默认 600，多张时可能同值）。若目标网卡不在配置的 `interfaces` 中，会按探测结果自动补齐，保证它确实被设为 preferred（否则会把其余网卡全压成 fallback）。
+- `revert` 恢复时若原始路由没有 metric（`metric` 字段缺失），则重建不带 metric 的默认路由（`metric=None`），不会凭空塞一个值。
 - 记录改动前的 `(gateway, dev, metric)` 到 state 文件，供 revert。
 - 网关探测依赖网卡当前存在默认路由；若网卡当前 DOWN 或无路由，须在配置中显式提供 `gateway`。
 
@@ -274,7 +297,8 @@ done
 ```
 
 - `backend: auto` 时，若探测到策略路由不可用，**自动使用 mainroute**。
-- 明细路由带 `proto 200` 标记，供 `status`/TUI 判定“已应用”与清理（`ip route del <cidr> table main`）。
+- 明细路由带 `proto 200` 标记（`iproute2` 只接受 1..255 的数值 proto）。清理时按**签名**识别自己的路由：只删“主表中确实存在、`proto = 200`、且出口网卡匹配”的条目，命令形如 `ip route del <cidr> proto 200 dev <出口网卡> table main`。**不会**碰到内核直连路由、他人的静态路由（`proto static`）或 VPN 路由（旧实现的无条件 `ip route del <cidr> table main` 会误删它们，已修正）。
+- 重建使用 `ip route replace`，且只清理“不再需要”的条目，避免“清空再重建”的瞬时断流。
 - 局限：仅按目标网段分流；目标网段多则主表条目较多；不支持按域名等。
 
 **撤销（revert / rule clear）**
@@ -288,7 +312,18 @@ ip route del default via 192.168.1.1 dev wlp129s0 table 200
 ip route del 192.168.1.0/24 dev wlp129s0 table 200
 ```
 
-> 多规则：每条规则独立的 `table_id`/`fwmark`/`nft_set`；`rule clear <name>` 只清理该规则对应的 set、`ip rule` 与路由表条目。
+> 多规则：每条规则独立的 `table_id`/`fwmark`/`nft_set`。
+
+### 4.3.1 应用与清理的原子性（重要）
+
+| 机制 | 做法 | 好处 |
+|------|------|------|
+| 先校验后改动 | `routing.preflight()` 先检查：出口网卡存在、网关可解析、CIDR 合法、`iprule` 后端所需 `ip rule` 数量不超上限（`RULE_PREF_MAX_COUNT=12000`，避免撞内核默认 `pref 32766`） | 失败时**零改动**，不会“清完才发现配置错” |
+| 一次拉取 | 同一次 apply 中每个 CIDR 源只拉取一次，并把结果传给清理与建表 | 避免同一 URL 请求 3~4 次、以及 set 与实际规则来自不同批次数据 |
+| 失败回滚 | 重建过程中出错则 best-effort 再清理一次并抛出 | 不留半成品 `ip rule`/路由表 |
+| 只删自己的产物 | nft 表名 / `proto 200` 主表路由 / `pref ∈ [20000, 32000)` 且表号在派生区间的 `ip rule` | 不误伤系统与他人的路由、规则 |
+| 声明式重建 | 无论调用 `apply` 还是 `rule apply <name>`，都按**配置声明的全部规则**重建 | 单独应用一条规则不会把其它规则清掉（旧行为会） |
+| 清理历史残留 | `revert`/清理会带上 state 里的历史表号，并扫描上述 `pref` 区间 | 规则被删除/改名/换表号后也能清干净；内核保留表 253/254/255 永不 `flush` |
 
 ### 4.4 容器出网流量覆盖（强制要求）
 
@@ -323,35 +358,50 @@ ip route del 192.168.1.0/24 dev wlp129s0 table 200
 
 - `cidrs.source: url` 时请求 `cidrs.url`，从返回 JSON 中提取 `cidrs.fields` 指定的字段里的 IPv4 CIDR。
 - 结果缓存到 `data/config/cache-<规则名>.json`，超过 `ttl_hours` 才重新拉取；拉取失败时回退到缓存。
-- 与 `cidrs.extra` 合并后去重。
+- 与 `cidrs.extra` 合并后**规范化并去重**：用 `ipaddress.ip_network(..., strict=False)` 统一为网络地址（`192.168.1.5/24` → `192.168.1.0/24`），裸地址按 `/32` 处理；非法项（域名、`1.2.3.4/999`、IPv6）一律丢弃并告警，绝不喂给 `nft`/`ip rule`。
+- 下载加固：响应体量上限 8MB、必须是 JSON 对象、`fields` 不得为空，否则报错并走缓存回退。
 - 已知局限：流量目标新增网段时需刷新缓存或手动补充 `extra`；初始 `github` 规则的权威来源是 `https://api.github.com/meta`。
 
 ### 4.6 FR9 网络自动探测与配置刷新
 
 用于把程序迁移到新机器、或网络环境变化后重新生成“机器相关”的配置（不写死）。流程：
 
-1. 枚举接口：`ip -j link`，排除虚拟接口（`lo`/`veth*`/`br-*`/`lzc-*`/`docker*`/`tun*`/`tap*`/`virbr*` 及 Point-to-Point 等），结合命名前缀（`en`/`eth`/`wl`/`wlan`/`ww`）识别物理网卡。
+1. 枚举接口：`ip -j link`，排除虚拟接口（`lo`/`veth*`/`br-*`/`lzc-*`/`docker*`/`tun*`/`tap*`/`virbr*`/`wg*`/`ppp*`/`dummy*`/`macvlan*`/`tailscale*` 等）与 **VLAN/别名子接口**（名字含 `.` 的 `enp2s0.100`）；随后优先用 **sysfs 判定**（`/sys/class/net/<if>/device` 存在 = 真实 PCI/USB 设备），再回退命名前缀（`en`/`eth`/`wl`/`wlan`/`ww`）与“`link_type=ether` 且无 master/link-netns”兜底。`bond0` 这类无 `device` 节点的聚合设备走兜底分支（仍可作为出口），其 slave 因带 `master` 被排除。
 2. 判类型：存在 `/sys/class/net/<if>/wireless` → 无线（并读当前 SSID：`iw dev <if> link`，回退 `iwgetid -r`），否则有线（TUI 高亮区分）。
 3. 读 IP：`ip -j -4 addr show <if>`。
 4. 读连接状态：`operstate`/`NO-CARRIER` → 已连接 / 未插网线 / 未有连接（见 §4.1）。
-5. 读默认路由：`ip -j route show default`，按 `dev` 匹配取 `gateway`/`metric`。
+5. 读默认路由：`ip -j route show default`，按 `dev` 匹配；同一网卡多条默认路由时取 **metric 最小**者（与 `primary_interface` 语义一致）。
 6. 生成 `interfaces` 配置片段（name/type/gateway/metric；类型与连接状态供 status/TUI 显示）。
 7. 合并策略：默认 **dry-run**（只打印拟生成 JSON）；`--write` 时**仅更新 `interfaces` 段**，保留 `rules`/`metrics`/`routing`/`state_file` 等；若规则引用的网卡已不存在则告警（不自动删除）。
 
-CLI 与 TUI 均触发同一探测逻辑（`detect.py`）。
+CLI 与 TUI 均触发同一探测逻辑（`detect.py`）。`detect` 输出中的 `*` 标记表示该网卡无 sysfs `device` 节点（容器/受限环境，或 bond 等聚合设备），物理性按命名推断。
+
+### 4.7 配置校验与路径约束
+
+配置里的值会被拼进 `nft -f` 脚本、`ip` 命令参数或直接用于文件写入，因此全部白名单校验（见 §3.2 表），非法配置在 `config.load()` 阶段直接报错，不进入任何写操作：
+
+- **标识符**：`routing.nft_table` 与 `rules[].name` 限制字符集与长度；规则名归一化后在 nft 中重名也报错（`a-b` 与 `a.b` 都变成 `a_b_v4`）。
+- **数值**：`table_id` ∈ 200..252（避开内核保留表 253/254/255，防止 `ip route flush table 254` 清空主表）；`fwmark` ∈ 1..0xFFFFFFFF；`metrics.*` 非负；`ttl_hours` 非负。
+- **路径**：`state_file` 与 `cidrs.cache_file` 解析后必须位于**数据目录**（默认 `<仓库>/data`，可用 `NETSWITCH_DATA_DIR` 覆盖）内，拒绝绝对路径越界与 `..` 穿越——这两个文件是由 root 写入的，旧实现可被配置指向 `/etc/...`。相对路径统一按**仓库根**解析（与 `log.py` 一致），不再随当前工作目录漂移。
+- **威胁模型**：仓库/配置目录可能由普通用户拥有，而 `apply` 由 `sudo`/systemd 以 root 运行。除上述校验外，建议 `data/config/config.json` 设为 `root:root 0600`。
 
 ## 5. 安全与健壮性
 
 | 措施 | 说明 |
 |------|------|
 | root 检查 | `os.geteuid()==0`，否则报错退出 |
-| dry-run | 所有破坏性命令支持 `--dry-run`，只打印不执行 |
+| dry-run | 所有破坏性命令支持 `--dry-run`，只打印不执行；**只读查询（`ip -j ... show`）即使 dry-run 也真实执行**，以便准确展示“将删除/将添加什么”；能力探测已改为只读，dry-run 不改动系统 |
 | 操作确认 | 网卡开关 / 转换 / 规则改写等破坏性操作需确认（TUI 提示 `y`；CLI `-y/--yes` 跳过，非交互需 `-y`） |
 | 最后网卡保护 | 仅一张网卡生效（唯一承载默认路由）时禁止关闭它；`--force` 为显式应急覆盖 |
-| 出口网卡检查 | 规则出口网卡为 DOWN 时告警并阻止（可 `--force`） |
-| 幂等 | apply 按配置重建（nft 整表替换 / ip rule 先清后建），重复执行结果一致 |
-| 原始状态记录 | state.json 记录 apply 前状态，revert 恢复 |
-| 命令原子报告 | 逐条执行并记录成功/失败，失败不静默 |
+| 只删自己的产物 | 清理按签名识别：nft 表名、主表 `proto 200` 明细路由（且出口网卡匹配）、`pref ∈ [20000, 32000)` 的 `ip rule` 与派生表号；不碰内核直连路由/他人静态路由 |
+| 出口网卡检查 | 出口网卡**不存在** → 预检直接拒绝（零改动）；网卡不是物理网卡或**当前未连接** → 告警并仍按配置应用（无线可能稍后才关联） |
+| 先校验后改动 | `preflight()` 全部通过才清理重建；网卡不存在、网关不可解、CIDR 非法、`ip rule` 超上限均直接拒绝，且**零改动** |
+| 失败回滚 | 重建中出错则 best-effort 清理已建产物后抛出，不留半成品状态 |
+| 配置白名单 | 标识符/数值/路径全部校验（§3.2、§4.7），未知 `backend` 报错而非静默回退 |
+| 命令注入防护 | 命令均以参数列表形式 `subprocess` 执行（无 shell）；nft 脚本内容由校验过的标识符拼成；下载体量上限 8MB |
+| 幂等 | apply 按配置声明重建（nft 整表替换 / 主表 `replace` / `ip rule` 先清后建），重复执行结果一致 |
+| 原始状态记录 | state.json 记录首次 apply 前的状态，`revert` 恢复；二次 apply 不覆盖基线 |
+| 命令原子报告 | 逐条执行并记录成功/失败，失败不静默；CLI 顶层兜底异常，只给人话 + 日志 traceback |
 
 ## 6. CLI 子命令（脚本接口）
 
@@ -372,8 +422,11 @@ tui-netswitch.sh                                   # 启动 TUI（scripts 便捷
 ```
 
 - `<rule>` 为配置中 `rules[].name`（如 `github`）；`--interface` 为一次性运行时覆盖（不写回配置）。
+- `rule apply <rule>`：语义为“**按配置重建全部规则**（声明式）”；`<rule>` 仅用于确认提示。这样单独应用一条规则不会把其它规则清掉。
 - `rule clear <rule>` 会清空该规则在 `config.json` 中的 `interface`（持久撤销）并重建策略路由。
+- `metric set <name> <n>`：`<n>` 必填，缺失时报参数错误（退出码 2）。
 - 破坏性操作（网卡开关、metric 转换、规则改写、apply/revert）默认**需确认**（交互提示 `[y/N]`）；`-y/--yes` 或环境变量 `NETSWITCH_YES=1` 跳过；非交互且未跳过则拒绝。
+- **顶层选项 `--config` 必须写在子命令之前**：`-m netswitch.cli --config <path> apply`（systemd 单元与安装脚本均按此写法）。
 - `detect` 默认只读（打印拟生成配置），加 `--write` 才写回，且仅更新 `interfaces` 段。
 - `scripts/` 下 shell 脚本自动设置 `PYTHONPATH=<repo>/src/python` 后调用 CLI/TUI。
 - `rule-apply.sh <规则名> [--interface 网卡]`、`rule-clear.sh <规则名>` 为规则操作的便捷包装。
@@ -384,6 +437,9 @@ tui-netswitch.sh                                   # 启动 TUI（scripts 便捷
 
 - **标题栏**：显示当前主机名（**蓝色**）：`netswitch · <主机名> · 网卡切换控制台`。
 - **启动即拉取 + 自动刷新**：进入即拉取实时网卡信息（数量 1~N、有线/无线、连接状态、IP、metric、默认路由）；界面每 ~1.5s 自动刷新，`f` 或 `F5` 手动刷新；底部状态栏显示“最后刷新 yyyyMMdd HH:mm:ss +ZZZZ”。因此开启网卡后 DHCP 获取 IP、链路变化会自动显示。
+- **刷新开销控制**：一次刷新周期内只探测一次网卡，探测结果直接传给 `config.load(probe_map=...)`；`mainroute` 后端下只 dump 一次主表并供所有规则复用（旧实现每 1.5s 会重复跑多轮 `ip` 命令、每条规则各 dump 一次主表）。
+- **错误展示**：状态栏只有一行，长错误（如“策略路由不受支持”多行提示）改用**错误弹层**完整折行展示，按任意键关闭；执行前状态栏先显示“执行中…”，避免拉取 CIDR 时看似卡死。
+- **配置非法也不崩溃**：配置校验失败时 TUI 照常打开并在状态栏/规则区上方显示原因（不因一个字段写错就退不到界面）。
 - **导航**：`↑`/`↓` 在所有条目（网卡在前、规则在后）间移动选中项；数字 `1`…`N` 直接选网卡；`g` 切换规则；`Enter` 对**网卡**执行默认动作（**设为主网卡**）；选中规则时 `Enter` 仅提示，不直接执行。
 - **网卡区颜色语义**：
   - **分流生效网卡**（某条已应用规则的出口）→ **黄色**
@@ -430,15 +486,17 @@ After=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# PYTHONPATH 指向 src/python（按实际安装路径修改）
-Environment=PYTHONPATH=/opt/netswitch/src/python
-ExecStart=/usr/bin/python3 -m netswitch.cli apply --yes
+# 相对路径（state.json / cache-*.json）按仓库根解析，因此固定工作目录
+WorkingDirectory=__REPO_ROOT__
+Environment=PYTHONPATH=__REPO_ROOT__/src/python
+# 顶层 --config 必须在子命令之前
+ExecStart=/usr/bin/python3 -m netswitch.cli --config __REPO_ROOT__/data/config/config.json apply --yes
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`install-systemd` 将服务写入 `/etc/systemd/system/` 并 `systemctl enable`。开机联网后自动应用配置（metric + 全部分流规则）。
+`install-systemd` 将服务写入 `/etc/systemd/system/` 并 `systemctl enable`；写入前会用同一套 argparse 解析 `ExecStart`，命令行不合法直接报错（避免“装得上、开机不生效”）。开机联网后自动应用配置（metric + 全部分流规则）。
 
 ## 9. 依赖
 
@@ -455,9 +513,11 @@ WantedBy=multi-user.target
 ## 10. 错误处理
 
 - 子命令返回非 0：收集 stderr，抛出带命令上下文的 `ExecError`。
-- 拉取 CIDR 源失败：告警并回退缓存/`extra`。
-- 配置缺失/非法：启动时校验并给出字段级错误提示。
-- 部分命令失败：apply 继续执行其余项，最后汇总报告；revert 可恢复。
+- 拉取 CIDR 源失败：告警并回退缓存/`extra`；非法 CIDR 丢弃并告警。
+- 配置缺失/非法：启动时校验并给出字段级错误提示（TUI 也不退出，直接显示原因）。
+- 分流应用：先 `preflight` 再改动；失败回滚清理；`apply` 中 metric 失败会继续执行规则并汇总报告。
+- CLI 顶层：已知错误（`ExecError`/`PermissionError`/`RuntimeError`/`ValueError`）给人话提示；其余异常记入日志并返回 `TypeError: ...（详见日志）`，不再甩 traceback。
+- 非 root 下策略路由能力为“未知”（`None`）：`status` 会明确提示，不会谎报支持/不支持。
 
 ## 11. 测试策略
 
@@ -465,8 +525,9 @@ WantedBy=multi-user.target
 
 ## 12. 日志
 
-- 目录：`logs/`（仓库根；可用环境变量 `NETSWITCH_LOG_DIR` 覆盖）。
-- 文件：`logs/netswitch.log`，按大小轮转（2MB × 5 个）。
+- 目录选择顺序：`setup(log_dir)` 参数 → `NETSWITCH_LOG_DIR` → `<仓库>/logs` → `$XDG_STATE_HOME/netswitch/logs` → 系统临时目录。
+  - 仓库内 `logs/` 若被 root 创建（install/apply 用 `sudo` 跑过），普通用户不可写，此时**自动回退**并在 stderr 提示一次（旧实现静默降级为“不写日志”）。
+  - `status` 会打印当前日志文件路径。
+- 文件：`netswitch.log`，按大小轮转（2MB × 5 个）。
 - 级别：默认 INFO（记录写类命令与高层动作）；`NETSWITCH_LOG_LEVEL=DEBUG` 可包含只读查询。
-- 内容：`exec.run` 记录每条系统命令（`OK`/`FAIL`/`DRY-RUN`）；apply/revert、网卡开关、metric、策略路由、配置写回、CIDR 拉取、CLI/TUI 启动均有记录。
-- 日志不可写时静默降级，不影响主流程。
+- 内容：`exec.run` 记录每条系统命令（`OK`/`FAIL`/`DRY-RUN`）；apply/revert、网卡开关、metric、策略路由、配置写回、CIDR 拉取、CLI/TUI 启动均有记录；启动行含版本、主机名与**发起用户**（`SUDO_USER` 优先）。

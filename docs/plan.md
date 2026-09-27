@@ -27,7 +27,7 @@
 
 ### M1 — 核心库（src/python/netswitch/）
 - [x] `exec.py`：root 检查、dry-run、命令执行与日志
-- [x] `model.py`：Interface / Route / Rule / NetState 数据模型
+- [x] `model.py`：`Interface`/`IfaceCfg`/`RuleCfg`/`CidrsCfg`/`MetricsCfg`/`RoutingCfg`/`Config` dataclass
 - [x] `config.py`：JSON 加载、默认值、探测填充、校验
 - [x] `detect.py`：FR9 网络自动探测（物理网卡/IP/网关/metric/类型）
 - [x] `ip.py`：`ip -j` 解析 + 命令构造
@@ -55,12 +55,21 @@
 ### M4 — 系统集成与加固
 - [x] `data/config/netswitch.service`（模板）+ `install-systemd`
 - [x] 安全防护：最后网卡保护、出口检查、`--force`
-- [ ] 测试代码（src/test/）：命令构造单测已完成（22 个通过）；netns 集成测试待做
+- [x] 测试代码（`src/test/`）：命令构造/单元测试 + **netns 集成测试**（`unshare -rn`，无需 root）
+
+### M6 — 安全加固与一致性修复（已完成）
+- [x] 清理安全化：只删本程序产物（nft 表名 / 主表 `proto 200` / `pref ∈ [20000,32000)` 的 `ip rule`），修复“误删直连/他人路由”
+- [x] 预检 + 失败回滚；CIDR 源一次 apply 只拉取一次；CIDR 规范化与非法项丢弃
+- [x] 配置白名单校验（标识符/表号/fwmark/路径）与数据路径锚定（仓库根 + 数据目录约束）
+- [x] 状态语义修复：`original_defaults` 只在首次记录；revert 后删除 state；记录后端与表号
+- [x] 能力探测改为只读；TUI/status 性能与错误展示；日志目录不可写自动回退
+- [x] systemd 单元修正（参数顺序 + 配置路径 + WorkingDirectory）并加解析校验
+- [x] 工程化：CI 改跑 `scripts/check.sh` + 多版本矩阵；`check-docs.sh` 增加 folder.md 覆盖与 changelog 门禁；新增 `pyproject.toml`
 
 ### M5 — 文档与验收
-- [ ] 更新 changelog / review-findings
-- [ ] 校验 docs/ 全部文档与实现一致（含 user-manuals / readme 索引）
-- [ ] 按 requirements.md 第 6 节验收清单逐项验证
+- [x] 更新 changelog / review-findings
+- [x] 校验 docs/ 全部文档与实现一致（含 user-manuals / readme 索引）
+- [ ] 按 requirements.md 第 6 节验收清单逐项验证（需目标机）
 
 ## 3. 任务依赖
 
@@ -76,6 +85,6 @@
 
 ## 5. 当前状态
 
-- 阶段：M1~M3 完成，M4 基本完成（缺 netns 集成测试），M5 待真实机器验收。
-- 单测：22 个通过（`pytest src/test`）。
-- 下一步：在目标机上跑 `preflight.sh` → `detect --write` → `apply --dry-run` → 真实验收；补充 netns 集成测试。
+- 阶段：M1~M4、M6 完成；M5 文档已同步，剩「目标机验收」。
+- 测试：**160 个用例通过**（`scripts/run-test.sh`），含 3 个 netns 集成用例（`unshare -rn`，无需 root）。
+- 下一步：在目标机上跑 `preflight.sh` → `detect --write` → `apply --dry-run` → 真实验收；补充容器转发/NAT 的 netns 用例（I-05~I-07）。

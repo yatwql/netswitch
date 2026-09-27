@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import socket
 
-from . import detect, ip, routing, version
+from . import detect, ip, log, routing, version
 from .model import Config
 
 _STATE_LABEL = {
@@ -20,17 +20,27 @@ def state_label(state: str) -> str:
 def print_status(config: Config) -> None:
     interfaces = detect.detect_interfaces()
     backend = routing.resolve_backend(config.routing.backend)
+    log_file = log.current_log_file()
 
     print(f"主机: {socket.gethostname()}   版本: {version.__version__}")
     print(f"程序更新: {version.program_mtime_str()}")
     print(version.user_line())
+    print(f"日志: {log_file or '(不可写，已禁用)'}")
+    if ip.policy_routing_supported() is None:
+        print("提示: 非 root，策略路由能力未确认（实际以 root 运行 apply 时为准）")
+
     print("== 物理网卡 ==")
+    inferred = False
     for i in interfaces:
         ssid = f" SSID={i.ssid or '-'}" if i.type == "wireless" else ""
-        print(f"  {i.name:<12} {('无线' if i.type == 'wireless' else '有线'):<4} "
+        mark = "" if i.device_confirmed else "*"
+        inferred = inferred or not i.device_confirmed
+        print(f"  {i.name:<12}{mark} {('无线' if i.type == 'wireless' else '有线'):<4} "
               f"状态={state_label(i.state):<5} IP={i.ip or '-':<18} "
               f"metric={i.metric if i.metric is not None else '-'} "
               f"网关={i.gateway or '-'}{ssid}")
+    if inferred:
+        print("  * 无 sysfs device 节点（容器/受限环境，或 bond 等聚合设备）：按命名推断为物理网卡")
 
     print("\n== 默认路由 ==")
     for r in ip.route_list():
@@ -41,10 +51,16 @@ def print_status(config: Config) -> None:
     print(f"\n== 分流规则（后端: {routing.backend_note(backend)}）==")
     if not config.rules:
         print("  （无）")
+    main_routes = routing.main_table_routes() if backend == "mainroute" else None
     for r in config.rules:
+        try:
+            applied = routing.rule_applied(config, r, main_routes=main_routes)
+        except Exception as exc:  # noqa: BLE001 - 查询失败不应让 status 整体崩掉
+            applied = False
+            print(f"  （规则 {r.name} 状态查询失败：{exc}）")
         if not r.enabled:
             mark = "禁用"
         else:
-            mark = "已应用" if routing.rule_applied(config, r) else "未应用"
+            mark = "已应用" if applied else "未应用"
         iface = r.interface or "-"
         print(f"  {r.name:<12} 出口={iface:<12} 状态={mark}")

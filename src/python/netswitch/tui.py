@@ -1,7 +1,7 @@
 """curses TUI（FR5/FR6）。零第三方依赖，纯键盘操作。
 
 导航：↑/↓ 移动选中项；数字 1..N 选网卡；g 切换规则。
-操作：o 开关网卡、m 设为主网卡、t 改 metric；e 选规则生效网卡、p 应用、c 撤销。
+操作：o 开关网卡、m 设为主网卡、t 改 metric；e 选规则生效网卡、p 应用、c 撤销（写回配置）。
 全局：d 探测、a 应用全部、r 撤销全部、f/F5 刷新、q/Ctrl+C 退出。
 """
 from __future__ import annotations
@@ -36,11 +36,35 @@ def move_index(cur: int, length: int, delta: int) -> int:
     return max(0, min(length - 1, cur + delta))
 
 
+def wrap_text(text: str, width: int) -> List[str]:
+    """按显示宽度折行（CJK 按 2 列估算），供弹层完整展示长错误。"""
+    lines: List[str] = []
+    for raw in str(text).splitlines() or [""]:
+        cur, w = "", 0
+        for ch in raw:
+            cw = 2 if ord(ch) > 0x2000 else 1
+            if cur and w + cw > width:
+                lines.append(cur)
+                cur, w = ch, cw
+            else:
+                cur += ch
+                w += cw
+        lines.append(cur)
+    return lines or [""]
+
+
 class _App:
     def __init__(self, stdscr, config_path: Optional[str]):
         self.stdscr = stdscr
         self.config_path = config_path or config_mod.DEFAULT_CONFIG
-        self.config: Config = config_mod.load(self.config_path)
+        self.msg = ""
+        self.config_error = ""
+        try:
+            self.config: Config = config_mod.load(self.config_path)
+        except Exception as exc:  # noqa: BLE001 - 配置非法时 TUI 仍可打开并显示原因
+            self.config = Config()
+            self.config_error = str(exc)
+            self.msg = f"配置错误: {exc}"
         self.ifaces = []
         self.primary: Optional[str] = None
         self.applied: Dict[str, bool] = {}
@@ -50,8 +74,7 @@ class _App:
                              f"程序更新 {version.program_mtime_str()} · "
                              f"{version.user_line()}")
         self.sel: Optional[Tuple[str, str]] = None   # ("iface"|"rule", name)
-        self.msg = ""
-        if not version.is_root():
+        if not self.config_error and not version.is_root():
             self.msg = "⚠ 非 root：写操作不可用，请用 sudo 运行 scripts/tui-netswitch.sh"
         self.last_refresh = ""
         self._refresh_ms = 1500          # 自动刷新间隔（毫秒）
@@ -133,15 +156,23 @@ class _App:
         ans = self._prompt(msg + " [y/N]")
         return ans is not None and ans.lower() in ("y", "yes")
 
-    def _guard(self, fn) -> None:
+    def _guard(self, fn, busy: str = "执行中…（首次可能需要拉取 CIDR）") -> None:
         if os.geteuid() != 0:
             self.msg = "需要 root：请用 sudo 运行 scripts/tui-netswitch.sh"
             return
+        self.msg = busy
+        try:
+            self.draw()          # 先展示“正在执行”，避免看起来卡死
+        except curses.error:
+            pass
         try:
             msg = fn()
             self.msg = msg if isinstance(msg, str) and msg else "完成"
         except Exception as exc:  # noqa: BLE001
             self.msg = f"错误: {exc}"
+            text = str(exc)
+            if "\n" in text or len(text) > 40:
+                self._show_error(text)   # 长错误（如 EOPNOTSUPP 提示）用弹层完整展示
 
     def _warn(self, m: str) -> None:
         self.msg = f"⚠ {m}"
@@ -201,16 +232,26 @@ class _App:
 
     # ---------- 数据 ----------
     def refresh(self) -> None:
-        self.config = config_mod.load(self.config_path)
         self.ifaces = detect.detect_interfaces()
+        try:
+            # 复用同一次探测结果，避免 config.load 再跑一遍 ip 命令
+            self.config = config_mod.load(
+                self.config_path, probe_map={i.name: i for i in self.ifaces})
+            self.config_error = ""
+        except Exception as exc:  # noqa: BLE001
+            self.config_error = str(exc)
+            self.msg = f"配置错误: {exc}"
         self.primary = detect.primary_interface(self.ifaces)
         items = self._items()
         if self.sel not in items:
             self.sel = items[0] if items else None
+        backend = routing.resolve_backend(self.config.routing.backend)
+        main_routes = routing.main_table_routes() if backend == "mainroute" else None
         self.applied = {}
         for r in self.config.rules:
             try:
-                self.applied[r.name] = routing.rule_applied(self.config, r)
+                self.applied[r.name] = routing.rule_applied(
+                    self.config, r, main_routes=main_routes)
             except Exception:  # noqa: BLE001
                 self.applied[r.name] = False
         self.active_egress = {
@@ -295,13 +336,14 @@ class _App:
         y += 1
         self._add(y, 0, "── 导航 ── ↑/↓ 移动 · 1..N 选网卡 · g 切规则 · Enter 执行(网卡=主网卡)")
         y += 1
-        self._add(y, 0, "── 网卡/规则 ── o 开关 · m 主网卡 · t metric · e 出口 · p 应用 · c 撤销")
+        self._add(y, 0, "── 网卡/规则 ── o 开关 · m 主网卡 · t metric · e 出口 · p 应用 · c 撤销(改配置)")
         y += 1
         self._add(y, 0, "── 全局 ── d 探测 · a 应用全部 · r 撤销 · f/F5 刷新 · Esc 返回 · q/Ctrl+C 退出")
         y += 1
         if y < h:
+            status = f"配置错误: {self.config_error}" if self.config_error else self.msg
             self._add(y, 0,
-                      f"状态: {self.msg}    [最后刷新 {self.last_refresh}]",
+                      f"状态: {status}    [最后刷新 {self.last_refresh}]",
                       curses.A_BOLD)
 
         self.stdscr.noutrefresh()
@@ -313,6 +355,19 @@ class _App:
         for i, ln in enumerate(lines, 1):
             self._add(i, 0, "  " + ln)
         self.stdscr.refresh()
+
+    def _wrap(self, text: str, width: int) -> List[str]:
+        return wrap_text(text, width)
+
+    def _show_error(self, msg: str) -> None:
+        """错误详情弹层（按任意键关闭）：状态栏只有一行，放不下多行提示。"""
+        _, w = self.stdscr.getmaxyx()
+        self.stdscr.timeout(-1)
+        try:
+            self._show_box("错误（按任意键返回）", self._wrap(msg, max(20, w - 4)))
+            self.stdscr.getch()
+        finally:
+            self.stdscr.timeout(self._refresh_ms)
 
     # ---------- 网卡操作 ----------
     def do_toggle(self) -> None:
@@ -394,7 +449,7 @@ class _App:
             return
 
         if not self._confirm(
-            f"确认将规则 {rule.name} 的生效网卡设为 {target or '不分流'} 并写入配置?"
+            f"确认将规则 {rule.name} 的生效网卡设为 {target or '不分流'}，写入配置并重建规则?"
         ):
             self.msg = "已取消"
             return
@@ -415,7 +470,7 @@ class _App:
         if not rule:
             self.msg = "无规则可操作"
             return
-        if not self._confirm(f"确认应用规则 {rule.name}?"):
+        if not self._confirm(f"确认重新应用配置（含规则 {rule.name}）?"):
             self.msg = "已取消"
             return
 
@@ -432,7 +487,7 @@ class _App:
         if not rule:
             self.msg = "无规则可操作"
             return
-        if not self._confirm(f"确认撤销规则 {rule.name} 的分流（写入配置）?"):
+        if not self._confirm(f"确认撤销规则 {rule.name} 的分流（写入配置文件）?"):
             self.msg = "已取消"
             return
         name = rule.name
@@ -516,7 +571,10 @@ class _App:
         # 其它控制键静默忽略
 
     def run(self) -> None:
-        self.refresh()
+        try:
+            self.refresh()
+        except Exception as exc:  # noqa: BLE001 - 探测失败也要能进界面看原因
+            self.msg = f"探测失败: {exc}"
         self.stdscr.keypad(True)                 # 使 ↑/↓、F5 等特殊键可用
         self.stdscr.timeout(self._refresh_ms)   # 定期自动刷新
         try:

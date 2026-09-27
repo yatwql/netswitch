@@ -69,5 +69,5 @@ scripts/tui-netswitch.sh                   # 方式 B：TUI 界面
 
 ## 7. 工程与质量
 
-- **测试**：`src/test/` 下 44 个 pytest 单测，`scripts/run-test.sh`。
-- **提交门槛**：`AGENTS.md` 规定「测试全绿 + 文档核对」；CI 与本地钩子自动执行；`scripts/check.sh` 一键核对。
+- **测试**：`src/test/` 下 160 个 pytest 用例（含 netns 集成用例），`scripts/run-test.sh`。
+- **提交门槛**：`AGENTS.md` 规定「测试全绿 + 文档核对」；CI（Python 3.9/3.11/3.13 矩阵）与本地钩子自动执行；`scripts/check.sh` 一键核对。

@@ -41,7 +41,7 @@
   }
 }
 ```
-`table_id`/`fwmark` 不填会自动分配且保证唯一；`interface` 也可以后续在 TUI 里用 `e` 选择。
+`table_id`/`fwmark` 不填会自动分配且保证唯一（`table_id` 必须 200..252，避开内核保留表 253/254/255；`fwmark` 不能为 0）；`interface` 也可以后续在 TUI 里用 `e` 选择。配置里写错 `backend`、规则名、表号或路径时会在启动阶段直接报错，不会带病改动网络。
 
 **Q8：默认有分流规则吗？**
 有。`config.example.json` 自带一条 **`github` 缺省规则**（分流 github.com 相关流量），**出口网卡留空**。新装机后：在 TUI 选中该规则按 `e` 选出口网卡即可。若配置里 `rules` 为空（如旧配置），运行 `scripts/cli-netswitch.sh seed-defaults` 写入缺省规则。
@@ -54,8 +54,13 @@ TUI：选中网卡按 `m`（或 `Enter`）→ `y` 确认。CLI：`sudo scripts/c
 **Q10：怎么撤销某条分流规则？**
 TUI：选中规则按 `c`；CLI：`sudo scripts/cli-netswitch.sh rule clear <规则名>`。两者都会清空该规则在 `config.json` 里的 `interface`（**持久撤销**），下次 `apply` 不会复活。
 
+> `rule apply <规则名>` 的语义是“**按配置重建全部规则**”（声明式），单独应用一条不会把其它规则清掉；`<规则名>` 只用于确认提示。
+
 **Q11：怎么完全恢复原状？**
-`sudo scripts/cli-netswitch.sh revert`：清理策略路由并按 `data/config/state.json` 恢复原始默认路由与 metric。
+`sudo scripts/cli-netswitch.sh revert`：清理本程序的分流产物并按 `data/config/state.json` 恢复原始默认路由与 metric，成功后删除 state 文件。原始值只在本轮**首次** apply 时记录，之后重复 apply 不会把它覆盖成被改过的值。
+
+**Q11b：清理会不会误删我自己加的路由？**
+不会。清理按“签名”识别自己的产物：nft 表名、主表中 `proto 200` 的明细路由（且出口网卡匹配）、`pref 20000+` 且表号在派生区间的 `ip rule`。内核直连路由（`proto kernel`）和你手写的静态路由（`proto static`）都不会被动（netns 集成用例覆盖）。
 
 **Q12：只插了一张无线（有线没插网线），能关掉它吗？**
 不能。**仅剩一张生效网卡（唯一承载默认路由）时禁止关闭**，避免主机断网。确需关闭用 `--force`（应急）。
@@ -77,7 +82,7 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 
 **Q23：设置分流规则时报 `RTNETLINK answers: Operation not supported`？**
 说明**本机内核/命名空间不支持策略路由（多路由表）**。常见原因：内核未启用 `CONFIG_IP_MULTIPLE_TABLES`（常见于精简/嵌入式内核），或运行在受限容器 / gVisor 中（容器内无法改路由规则）。
-- 用 `scripts/preflight.sh` →「策略路由能力」确认（会尝试添加一个临时路由表条目）。
+- 用 `scripts/preflight.sh` →「策略路由能力」确认（会临时增删一条测试路由并立即删除；并发预检时不会误报）。
 - 程序会**自动回退 `mainroute` 后端**：在主路由表按目标网段加明细路由（`ip route replace <cidr> via <网关> dev <网卡>`），不需多路由表与 `ip rule`。
 - 若 `preflight.sh` 里「主表路由」也失败（受限容器/gVisor），则确实无法分流；此时若只想让某张网卡承载**全部**流量，可改用「设为主网卡」（`m` / `metric primary`）。
 
@@ -101,7 +106,7 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 ## 日志与自恢复
 
 **Q21：日志在哪？**
-`logs/netswitch.log`（按大小轮转）。默认记录写操作与高层动作；`NETSWITCH_LOG_LEVEL=DEBUG` 可含只读查询；`NETSWITCH_LOG_DIR` 可改目录。
+默认 `logs/netswitch.log`（按大小轮转）。如果 `logs/` 被 root 创建而你现在是普通用户，程序会**自动改写到** `$XDG_STATE_HOME/netswitch/logs/netswitch.log`（并在 stderr 提示一句）；直接跑 `scripts/cli-netswitch.sh status` 可以看到“日志:”一行给出的实际路径。也可用 `NETSWITCH_LOG_DIR` 显式指定目录。默认记录写操作与高层动作；`NETSWITCH_LOG_LEVEL=DEBUG` 可含只读查询。
 
 **Q22：怎么开机自动应用配置？**
 `sudo scripts/cli-netswitch.sh install-systemd`（或 `sudo scripts/install.sh --with-systemd`）。服务开机联网后执行 `apply`（幂等）。
@@ -109,4 +114,4 @@ CIDR 缓存默认 24h 自动刷新；紧急时在 `rules[].cidrs.extra` 手动�
 **Q24：我用普通用户登录、用 `sudo` 运行，会有问题吗？**
 `sudo` 运行**没问题**（`euid=0`，权限检查通过；`SUDO_USER` 会显示你的登录名）。两点注意：
 - **写操作必须 sudo**（非 root 运行 TUI/CLI 会明确提示；TUI 标题会显示「⚠ 非root·只读」）。
-- 用 sudo 跑过后，`data/config/*`、`logs/*` 会变成 **root 所有**；之后非 root 执行 `install.sh` / `detect --write` 会无权限。建议**统一用 sudo**，或 `sudo chown -R "$USER" data logs` 修回所有权。
+- 用 sudo 跑过后，`data/config/*`、`logs/*` 会变成 **root 所有**；日志写不进去时程序会自动回退到用户可写目录（不会静默丢失），但 `data/config/config.json` 仍需 root 才能写回（`detect --write` / TUI 改配置）。建议**统一用 sudo**，或 `sudo chown -R "$USER" data logs` 修回所有权。

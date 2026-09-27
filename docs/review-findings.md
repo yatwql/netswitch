@@ -77,6 +77,49 @@
 
 ---
 
+## 第 3 轮自查（安全 / 一致性加固，全部已修复）
+
+本轮以“真实执行行为 vs 文档承诺”为线索逐项验证（含 netns 实测），发现并修复以下问题：
+
+### P0 正确性 / 安全
+1. **[缺陷·已验证] `clear_rules` 会误删系统与他人的主表路由**：清理时无条件执行 `ip route del <cidr> table main`，既不判断后端、也不按 `proto 200` 过滤。netns 实测：内核直连路由（`proto kernel`）与他人静态路由（`proto static`）都会被静默删除 → 每次 apply 都可能造成断网。
+   **修复**：清理只删“主表中确实存在、`proto = MAINROUTE_PROTO(200)`、且出口网卡匹配”的条目（`ip route del <cidr> proto 200 dev <iface> table main`），并加 netns 集成用例 I-09。
+2. **[缺陷·已验证] systemd 单元生成即坏**：模板写成 `apply --yes --config <repo>/data/config/config.yaml` —— 扩展名错（实际是 JSON）+ 顶层 `--config` 放在子命令之后。实测 argparse 报 `unrecognized arguments ... (exit=2)`，即“装得上、开机不生效”；且无 `WorkingDirectory`，而 state/cache 是相对路径。
+   **修复**：`--config .../config.json` 前置 + `WorkingDirectory` + 安装前用同一 argparse 校验 `ExecStart`；新增回归测试 T-cli-09/10。
+3. **[缺陷·已验证] 配置值零校验**：`table_id` 无范围校验（`254` 会让 `ip route flush table 254` 清空主表）；`nft_table` 未过滤就拼进 `nft -f` 脚本（可注入）；`a-b` 与 `a.b` 归一化后同名 `a_b_v4`（nft 整表失败）；`cache_file`/`state_file` 可指向 `/etc/...`（root 任意写文件，配合“仓库属主非 root + sudo 运行”构成提权面）。
+   **修复**：`config._validate()` 白名单校验 + `_data_path()` 数据目录约束（§4.7）。
+
+### P1 健壮性 / 数据一致性
+4. **[缺陷] 重复 apply 污染 revert 基线**：每次 apply 都覆写 `original_defaults`，第二次抓到的是“已被自己改过的 metric” → revert 恢复不回去。**修复**：只在首次记录；revert 成功后删除 state。
+5. **[缺陷] 配置变更后清理不彻底**：清理目标由当前配置推导，规则被删/改名/换表号后旧的 `ip rule` 与派生路由表永久残留。**修复**：按 `pref ∈ [20000,32000)` + 派生表号区间扫描，并接受 state 里的历史表号。
+6. **[缺陷] “先清后建、无回滚”**：预检缺失，任何一条命令失败都会留下半成品。**修复**：`preflight()` → `clear` → 重建，失败 best-effort 回滚；CIDR 也在入口统一规范化，非法项不再进命令。
+7. **[缺陷] 同一 CIDR 源一次 apply 最多请求 4 次**（`_build_nft_script` 内部重复拉取 + 主流程 + 清理），且 set 与实际规则可能来自不同批次数据。**修复**：一次拉取、传 map。
+8. **[缺陷] 能力探测会写系统且并发误判**：root 下临时增删测试路由（dry-run 也会执行），并发时第二个进程拿到 `File exists` 被误判为“不支持策略路由”；非 root 直接返回 True（谎报支持）。**修复**：改为只读 `ip -j rule show` 探测，非 root 返回“未知”（`None`），TUI/status 明示。
+9. **[缺陷·已验证] `set_primary` 对“不在 config.interfaces 的网卡”静默失效**：实测 `set_primary('wlp129s0')` 只把 `enp2s0` 压成 fallback，目标网卡毫无变化 → 结果没有任何 preferred 网卡。**修复**：按探测结果补齐目标网卡。
+
+### P2 体验 / 可观测性 / 工程化
+10. **[缺陷] `metric set <iface>` 缺数值**：实测 `int(None)` 抛 `TypeError`，而顶层只捕获 4 类异常 → 用户看到 traceback。**修复**：参数校验（退出码 2）+ 顶层兜底异常（人话 + 日志 traceback）。
+11. **[缺陷] TUI 长错误看不见 + 每 1.5s 重复探测**：状态栏单行截断（EOPNOTSUPP 多行提示不可读）；每轮刷新重复跑 `ip` 命令、`mainroute` 下每条规则各 dump 一次主表。**修复**：错误弹层（含 CJK 折行）+ 探测/主表快照复用 + “执行中…”提示。
+12. **[缺陷] root 跑过之后普通用户日志静默丢失**：`logs/` 归 root，`setup()` 捕获 `OSError` 后降级 `NullHandler`。**修复**：自动回退到 `$XDG_STATE_HOME`/临时目录并提示一次；`status` 打印日志路径；启动行加发起用户。
+13. **[缺陷] 物理网卡识别偏乐观**：VLAN 子接口/`dummy`/`wg`/`ppp` 等可能被当成物理网卡并写默认路由。**修复**：sysfs `device` 优先 + VLAN/虚拟前缀排除；同一网卡多条默认路由取 metric 最小者。
+14. **[缺陷] 工程化门禁有漏**：CI 只跑 pytest + check-docs（漏 `check-version.sh`，单一 Python 版本）；`check-docs.sh` 只校验“文件存在”，AGENTS.md 的“改代码必须同步 changelog/folder”全靠人。**修复**：CI 改调 `scripts/check.sh` + 3.9/3.11/3.13 矩阵 + `bash -n`/`compileall`/pyproject 解析；`check-docs.sh` 增加 folder.md 覆盖与 changelog 门禁；新增 `pyproject.toml`。
+15. **[缺陷] 文档漂移**：`plan.md` 写“22 个单测”（实际已 160）与不存在的 `Route`/`NetState`；`model.py` 注释漏 `mainroute`。**修复**：全部同步（含本文件与 test-plan/user-manuals/faq）。
+
+### 本轮新增的自动化回归
+
+| 用例 | 覆盖 |
+|------|------|
+| I-09（netns） | 清理只删 `proto 200`；`proto kernel`/`proto static` 原样保留 |
+| I-10（netns） | mainroute apply→clear 闭环，清理后直连子网路由保留 |
+| I-11（netns） | 能力探测与 dry-run 清理不改动系统 |
+| T-config-10~17 | backend/table_id/fwmark/名字/nft_table/路径校验与探测快照复用 |
+| T-route-08~14 | 清理边界、预检零改动、失败回滚、历史残留清理、一次拉取 |
+| T-apply-05~07 | 基线不被覆盖、revert 恢复并清理、state 损坏容错 |
+| T-cli-07~10 | `metric set` 缺值、顶层兜底、`--config` 位置、systemd 模板解析 |
+| T-log-01 | 日志目录不可写时回退 |
+
+---
+
 ## 更新记录
 
 | 日期 | 阶段 | 变更 |
@@ -85,3 +128,4 @@
 | - | M0 | 设计复盘第 2 轮（10 项，总体设计/可配置化） |
 | - | M4 | 实现阶段自查（3 项） |
 | - | M4 | 发布过程缺陷（1 项） |
+| - | M6 | 第 3 轮自查（15 项：安全/一致性加固，全部修复并补自动化回归） |

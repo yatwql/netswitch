@@ -174,17 +174,23 @@ else
 fi
 
 # 策略路由能力（自定义路由表 + ip rule）
+# 说明：会**临时**添加一条测试路由并在结束时删除（表 12345），以真实验证内核能力；
+# 若 add 失败但探测项已存在（并发运行了另一份预检），视为支持，不误报。
 if ip route add 203.0.113.0/24 dev lo table 12345 2>/dev/null; then
   ip route del 203.0.113.0/24 dev lo table 12345 2>/dev/null
   ok "策略路由能力：自定义路由表可用（后端 nftables/iprule 可用）"
+elif ip route show table 12345 2>/dev/null | grep -q '203.0.113.0/24'; then
+  ok "策略路由能力：自定义路由表可用（探测项已存在，未重复添加）"
 else
   warn "策略路由能力：自定义路由表不可用（内核可能缺 CONFIG_IP_MULTIPLE_TABLES，或受限容器/gVisor）—— 将回退 mainroute"
 fi
 
-# mainroute 回退能力（主表明细路由，不需策略路由）
+# mainroute 回退能力（主表明细路由，不需策略路由）：同样临时增删一条测试路由
 if ip route add 203.0.113.0/24 dev lo 2>/dev/null; then
   ip route del 203.0.113.0/24 dev lo 2>/dev/null
   ok "主表路由可用（mainroute 后端可回退分流）"
+elif ip route show 203.0.113.0/24 2>/dev/null | grep -q '203.0.113.0/24'; then
+  ok "主表路由可用（探测项已存在，未重复添加）"
 else
   fail "主表路由亦不可用（受限容器/gVisor）—— 无法分流"
 fi

@@ -14,9 +14,9 @@
 
 | 层次 | 说明 | 运行位置 |
 |------|------|----------|
-| 单元测试 | 纯逻辑：配置解析、默认值填充、`ip -j` 解析、CIDR 合并 | 任意环境 |
+| 单元测试 | 纯逻辑：配置解析/校验、默认值填充、`ip -j` 解析、CIDR 规范化与合并、状态文件语义 | 任意环境 |
 | 命令构造测试 | 断言 dry-run 生成的命令序列正确（不真正执行系统命令） | 任意环境 |
-| 集成测试 | 在 `ip netns` 隔离环境内真实执行 `ip`/`nft`，验证路由/nft 行为 | 需 root + netns |
+| 集成测试（netns） | 用 `unshare -rn` 起临时 netns（**不需 root**）跑真实 `ip` 命令，验证“只删自己的路由”、apply/clear 闭环、dry-run 不改系统 | 需 Linux + 非特权 user namespace；不满足自动 skip |
 | 手动验收 | 真实多网卡（1~N）+ 容器出网验证 | 目标机 |
 
 原则：**不碰真实网卡**的自动化测试优先；真实网卡操作一律走 dry-run 或 netns。
@@ -24,8 +24,9 @@
 ## 3. 测试环境
 
 - 单元/命令构造：普通用户即可，无需 root。
-- 集成：root 权限 + `iproute2` + `nftables`；用 `ip netns add ns1` 建隔离网络命名空间，`ip -n ns1 ...` 操作。
-- 依赖注入：核心模块接受 `runner`（命令执行器）参数，测试注入 fake runner 记录/回放命令，实现 dry-run 断言与单元隔离。
+- 集成：`unshare -rn`（非特权 user namespace）+ `iproute2`；用 `pytest.mark.integration` 标记，环境不支持时自动 skip。
+- 依赖注入：monkeypatch 替换 `iproute2` 查询与命令执行器，断言命令序列、校验副作用边界。
+- 当前规模：**160 个用例通过**（含 3 个 netns 集成用例），全部无需 root。
 
 ## 4. 测试用例清单
 
@@ -53,6 +54,14 @@
 | T-config-07 | P1 | 非法字段值（负 metric、越界 table_id） | 报错 |
 | T-config-08 | P0 | 配置中不出现 `github` 字样也能工作 | 验证通用性（规则名任意） |
 | T-config-09 | P1 | `metrics.preferred/fallback` 缺省 | 默认 100/600 |
+| T-config-10 | P0 | `routing.backend` 拼错 | 报错（不再静默回退 auto） |
+| T-config-11 | P0 | `table_id` ∈ {0,1,199,253,254,255,999} | 报错（含内核保留表） |
+| T-config-12 | P0 | `fwmark` = 0 / 负数 / >0xFFFFFFFF | 报错 |
+| T-config-13 | P0 | `nft_table` / 规则名含非法字符或过长 | 报错（防注入） |
+| T-config-14 | P0 | 规则名归一化后重名（`a-b` / `a.b`） | 报错（否则 nft 整表失败） |
+| T-config-15 | P0 | `state_file`/`cache_file` 越界（`/etc/...`、`../`） | 报错（数据目录约束） |
+| T-config-16 | P1 | 相对路径解析 | 按仓库根解析为绝对路径，不随 CWD 漂移 |
+| T-config-17 | P1 | 传入 `probe_map` 快照 | 不再执行 `ip` 探测命令 |
 
 ### 4.3 ip.py — ip 输出解析与命令构造
 
@@ -62,6 +71,10 @@
 | T-ip-02 | P0 | 解析 `ip -j link` 状态 | 提取 UP/DOWN、MAC、类型 |
 | T-ip-03 | P1 | 构造 `ip route del/add` 命令 | 参数正确 |
 | T-ip-04 | P1 | 构造 `ip rule add fwmark`/`to <cidr>` | 参数正确 |
+| T-ip-05 | P0 | 策略路由能力探测（root，不支持） | **只读** `ip rule show` 判定为 False，不增删路由 |
+| T-ip-06 | P0 | 能力探测（非 root） | 返回“未知”（None），不谎报支持 |
+| T-ip-07 | P0 | `rule_pref` 超出上限 | 报错（不撞内核默认 `pref 32766`） |
+| T-ip-08 | P0 | 物理网卡识别 | VLAN 子接口/`dummy`/`wg`/`ppp`/`macvlan` 不算物理；sysfs `device` 节点优先 |
 
 ### 4.4 iface.py — 网卡开关 / metric（FR1/FR2）
 
@@ -70,9 +83,11 @@
 | T-iface-01 | P0 | `iface down` 普通网卡 | 生成 `ip link set <if> down` |
 | T-iface-02 | P0 | `iface down` 最后一张已连接网卡 | 拒绝，需 `--force` |
 | T-iface-03 | P0 | `iface up` | 生成 `ip link set <if> up` |
-| T-iface-04 | P0 | `metric set` | 先删后加默认路由，metric 正确 |
+| T-iface-04 | P0 | `metric set` | 先删**该网卡全部**默认路由，再添加，metric 正确 |
 | T-iface-05 | P0 | `metric primary` | 目标网卡 metric 最小，其余递增 |
 | T-iface-06 | P0 | 记录改动前状态 | state.json 含原始 gateway/metric |
+| T-iface-07 | P0 | `metric primary` 目标网卡不在配置 `interfaces` 中 | 自动补齐并真的设为 preferred（不静默失效） |
+| T-iface-08 | P1 | `metric=None`（revert 恢复） | 重建不带 metric 的默认路由 |
 
 ### 4.5 cidrs.py — CIDR 来源（FR4）
 
@@ -83,6 +98,8 @@
 | T-cidrs-03 | P0 | 缓存未过期 | 不重复请求 |
 | T-cidrs-04 | P0 | `extra` 合并 | 与来源 CIDR 合并去重 |
 | T-cidrs-05 | P0 | `source: manual` | 仅用 `extra` |
+| T-cidrs-06 | P0 | 非法 CIDR（域名、`1.2.3.4/999`、IPv6） | 丢弃并告警；网络地址归一化（`1.2.3.4/24`→`1.2.3.0/24`） |
+| T-cidrs-07 | P0 | 响应非 JSON 对象 / 超过 8MB / `fields` 为空 | 报错并走缓存回退 |
 
 ### 4.6 routing.py — 分流规则（FR3）
 
@@ -95,6 +112,14 @@
 | T-route-05 | P0 | 多规则并存 | 各自 table_id/fwmark/set 互不冲突 |
 | T-route-06 | P1 | 出口网卡为 DOWN | 告警并阻止（可 `--force`） |
 | T-route-07 | P0 | 幂等：重复 apply | 结果一致，无残留重复规则 |
+| T-route-08 | P0 | 清理只删自己的产物 | 主表无 `proto 200` 条目时不执行任何删除；`proto static`/`kernel` 路由不动 |
+| T-route-09 | P0 | 清理不碰“其它出口”的网段；待重建条目保留 | 不产生瞬时断流 |
+| T-route-10 | P0 | 预检失败（网卡不存在/网关不可解/CIDR 非法/`ip rule` 超上限） | **零改动**抛错，不先清空 |
+| T-route-11 | P0 | 重建中途失败 | best-effort 回滚清理后抛错 |
+| T-route-12 | P0 | 清理历史残留 `ip rule`/路由表 | 按 `pref` 区间与派生表号清理，不碰 254 等保留表 |
+| T-route-13 | P1 | 同一 CIDR 源一次 apply | 只拉取一次（每条规则一次） |
+| T-route-14 | P0 | 切换后端后清理 | 即使当前不是 nftables 后端，也会删历史 nft 表 |
+| T-route-15 | P1 | 出口网卡未连接/非物理 | 告警并继续应用（不阻断） |
 
 ### 4.7 apply.py — 编排 / revert（FR7）
 
@@ -104,6 +129,9 @@
 | T-apply-02 | P0 | `revert` | 恢复原始默认路由 + 清理规则 |
 | T-apply-03 | P0 | 部分命令失败 | 继续执行其余，最后汇总报告 |
 | T-apply-04 | P0 | `--dry-run` | 不改变系统状态 |
+| T-apply-05 | P0 | 二次 apply | 不覆盖 `original_defaults`（revert 能恢复真实原值） |
+| T-apply-06 | P0 | `revert` | 恢复原始默认路由 + 清理历史表号 + 删除 state 文件 |
+| T-apply-07 | P1 | state 文件损坏/非对象 | 按“无记录”处理并告警，不抛异常 |
 
 ### 4.8 cli.py — 命令行（FR5）
 
@@ -115,6 +143,10 @@
 | T-cli-04 | P1 | 退出码 | 成功 0，失败非 0 |
 | T-cli-05 | P0 | 非交互无 `--yes` 的破坏性操作 | 拒绝执行 |
 | T-cli-06 | P0 | `-y/--yes` | 跳过确认 |
+| T-cli-07 | P0 | `metric set` 缺数值 | 报错退出码 2（不再 `TypeError` traceback） |
+| T-cli-08 | P0 | 未预期异常 | 顶层兜底：人话提示 + 日志 traceback，退出码 1 |
+| T-cli-09 | P0 | `--config` 位置 | 必须在子命令前；错误位置报参数错误（systemd 单元回归） |
+| T-cli-10 | P0 | systemd 模板 `ExecStart` | 能被同一 argparse 解析；写错顺序时 `install-systemd` 报错 |
 
 ### 4.9 tui.py — TUI（FR5）
 
@@ -125,6 +157,7 @@
 | T-tui-03 | P1 | 「重新探测网络」按钮 | 触发 detect，弹层展示结果并提供写入/取消 |
 | T-tui-04 | P1 | 快捷键触发 | 按键与按钮点击调同一处理函数，字母正确显示在按钮上 |
 | T-tui-05 | P0 | 启动拉取实时信息 | 进入即拉取网卡数量/类型/连接状态；有线/无线高亮，未连接显示“未有连接” |
+| T-tui-06 | P1 | 长错误展示 | 折行后走错误弹层（`wrap_text` 单测覆盖 CJK 宽度） |
 
 ### 4.10 detect.py — 网络自动探测（FR9）
 
@@ -138,21 +171,35 @@
 | T-detect-06 | P1 | 规则引用不存在的网卡 | 告警不自动删 |
 | T-detect-07 | P0 | 连接状态判定 | operstate/NO-CARRIER → 已连接/未插网线/未有连接 |
 | T-detect-08 | P1 | 网卡数量不固定（1~3） | 按实际探测数量返回 |
+| T-detect-09 | P1 | 同一网卡多条默认路由 | 取 metric 最小者 |
+
+### 4.11 status.py / log.py
+
+| 编号 | 优先级 | 用例 | 预期 |
+|------|--------|------|------|
+| T-status-01 | P1 | 单条规则状态查询失败 | 打印失败原因，其余部分照常输出 |
+| T-status-02 | P1 | `mainroute` 后端多规则 | 主表只 dump 一次（结果复用） |
+| T-status-03 | P1 | 非 root | 提示“策略路由能力未确认”并显示日志路径 |
+| T-log-01 | P0 | 首选目录不可写 | 自动回退到用户可写目录并在 stderr 提示 |
+| T-log-02 | P1 | 启动行 | 含版本、主机名、发起用户 |
 
 ## 5. 集成测试（netns 隔离）
 
-在 netns 内搭建虚拟多网卡（1~N）+ 网关，验证真实系统行为（不碰物理网卡）：
+已自动化的部分在 `src/test/test_integration_netns.py`：用 `unshare -rn` 在临时 netns 内跑**真实** `ip` 命令（无需宿主 root），环境不满足时自动 skip。
 
-| 编号 | 优先级 | 场景 | 验证点 |
-|------|--------|------|--------|
-| I-01 | P0 | 双 veth 默认路由 + metric | `metric set` 后默认路由 metric 正确 |
-| I-02 | P0 | `iface down/up` | down 后该路由消失，up 后恢复 |
-| I-03 | P0 | 策略路由 nftables 后端 | 指定网段走指定网卡（`ip route get <ip>` 断言） |
-| I-04 | P0 | 策略路由 iprule 后端 | 同上 |
-| I-05 | P0 | 容器转发：规则目标 | netns 间转发按策略走指定出口（`ip route get <ip> from <容器IP> iif <网桥>` 断言） |
-| I-06 | P0 | 容器转发：NAT 源地址 | 转发后源地址改写为指定出口网卡 IP（netns + masquerade 验证） |
-| I-07 | P1 | rp_filter 宽松模式 | 关闭/宽松 rp_filter 时转发不被丢弃 |
-| I-08 | P0 | `revert` | `ip route`/`ip rule`/nft 恢复原状 |
+| 编号 | 优先级 | 场景 | 验证点 | 状态 |
+|------|--------|------|--------|------|
+| I-01 | P0 | 双 veth 默认路由 + metric | `metric set` 后默认路由 metric 正确 | 手动验收 |
+| I-02 | P0 | `iface down/up` | down 后该路由消失，up 后恢复 | 手动验收 |
+| I-03 | P0 | 策略路由 nftables 后端 | 指定网段走指定网卡（`ip route get <ip>` 断言） | 手动验收 |
+| I-04 | P0 | 策略路由 iprule 后端 | 同上 | 手动验收 |
+| I-05 | P0 | 容器转发：规则目标 | netns 间转发按策略走指定出口 | 手动验收 |
+| I-06 | P0 | 容器转发：NAT 源地址 | 转发后源地址改写为指定出口网卡 IP | 手动验收 |
+| I-07 | P1 | rp_filter 宽松模式 | 关闭/宽松 rp_filter 时转发不被丢弃 | 手动验收 |
+| I-08 | P0 | `revert` | `ip route`/`ip rule`/nft 恢复原状 | 手动验收 |
+| I-09 | P0 | 清理只删 `proto 200` | `proto static` 与 `proto kernel` 路由原样保留；自己的路由被清掉 | **已自动化** |
+| I-10 | P0 | mainroute apply→clear 闭环 | veth + 网关下 `ip route replace` 生效（`proto 200`、dev 正确），清理后消失且直连子网路由保留 | **已自动化** |
+| I-11 | P0 | dry-run 不改系统 | 能力探测与 `clear_rules(dry_run=True)` 前后 `ip -j route` 完全一致 | **已自动化** |
 
 ## 6. 手动验收清单（目标机）
 
@@ -171,10 +218,10 @@
 
 ## 8. 回归与 CI
 
-- 每次改动运行：`pytest src/test/`。
-- 命令构造测试与单元测试无 root 可跑，纳入 CI。
-- netns 集成测试需 root，作为本地/CI 特权步骤。
-- 发布 `0.1.0` 前（由 `dev` 合并到 `master`）全量通过 + 手动验收完成。
+- 每次改动运行：`scripts/run-test.sh`（= `scripts/check.sh` 的一部分）。
+- 命令构造/单元/netns 集成测试**均无需 root**，全部纳入 CI（`.github/workflows/ci.yml` 直接调用 `scripts/check.sh`，并在 Python 3.9/3.11/3.13 上跑）。
+- CI 额外跑 shell 语法检查（`bash -n`）、`compileall` 与 `pyproject.toml` 解析。
+- 发布 `X.Y` 前（由 `dev` 合并到 `master`）全量通过 + 手动验收完成。
 
 ## 9. 风险与未覆盖项
 
@@ -186,12 +233,12 @@
 ## 10. 执行方式
 
 ```bash
-# 单测 + 命令构造（无需 root；pytest.ini 已配置 testpaths=src/test）
+# 单测 + 命令构造 + netns 集成（无需 root；环境不支持时集成用例自动 skip）
 scripts/run-test.sh              # 或 python3 -m pytest -q / make test
 
-# 完整核对（测试 + 文档一致性，提交门槛）
-scripts/check.sh                # 或 make check
+# 只跑 netns 集成用例
+scripts/run-test.sh -m integration
 
-# 全部（含 netns 集成，需 root；集成测试暂未加入，后续用 -m integration）
-scripts/run-test.sh
+# 完整核对（测试 + 文档一致性 + 版本一致性，提交门槛）
+scripts/check.sh                # 或 make check
 ```

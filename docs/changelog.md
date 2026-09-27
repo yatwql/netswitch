@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+### Security / Fixed（安全与正确性）
+- **修复误删路由（严重）**：`clear_rules` 不再无条件执行 `ip route del <cidr> table main`。现在只删除“主表中确实存在、`proto = 200`（本程序标记）、且出口网卡匹配”的条目，不再误删内核直连路由、他人 `proto static` 路由或 VPN 路由（netns 实测旧实现会删掉它们）。同时清理只针对 `mainroute` 后端已启用规则，不再受禁用/被排除规则影响。
+- **修复 systemd 单元不可用**：`ExecStart` 由 `apply --yes --config .../config.yaml`（扩展名错 + 顶层选项位置错，实测 exit=2）改为 `--config .../config.json apply --yes`，并新增 `WorkingDirectory`；`install-systemd` 写入前会用同一套 argparse 校验 `ExecStart`。
+- **配置白名单校验**：`routing.backend` 必须是 `auto|nftables|iprule|mainroute`（拼错不再静默回退）；`nft_table`/`rules[].name` 限字符集与长度（且归一化后不得重名）；`table_id` 限定 200..252（避开内核保留表 253/254/255，防止 `flush` 主表）；`fwmark` 限定 1..0xFFFFFFFF；`cidrs.source`/`ttl_hours` 校验。
+- **数据路径约束**：`state_file`/`cidrs.cache_file` 必须落在数据目录（默认 `<仓库>/data`，可用 `NETSWITCH_DATA_DIR` 覆盖）内，拒绝绝对路径越界与 `..` 穿越；相对路径统一按仓库根解析，不再随当前工作目录漂移。
+
+### Fixed（健壮性 / 一致性）
+- **只读能力探测**：策略路由能力改为只读 `ip -j rule show` 探测（旧实现会临时增删测试路由，dry-run 也会写系统，并发时还会因 `File exists` 误判）；非 root 返回“未知”，`status` 明确提示。
+- **状态语义**：`state.json` 的 `original_defaults` 只在首次 apply 记录（旧实现每次 apply 都覆写，导致 revert 恢复到“被改过”的 metric）；新增 `backend`/`tables` 字段；revert 成功后删除状态文件；状态文件损坏时按“无记录”容错。
+- **预检 + 回滚**：`routing.apply_rules()` 先做只读预检（出口网卡存在、网关可解析、CIDR 合法、`iprule` 所需 `ip rule` 数不超上限），通过后才清理重建；重建中出错会 best-effort 回滚清理，不再留下半成品。
+- **清理历史残留**：清理按 `pref ∈ [20000, 32000)` + 派生表号区间识别本程序产物，并接受 state 里的历史表号 —— 规则被删除/改名/换表号、或切换后端后都能清干净（内核保留表永不被 flush）。
+- **CIDR 一次拉取 + 规范化**：同一次 apply 每个 CIDR 源只拉取一次（旧实现每条规则最多请求 4 次，且 nft set 与实际规则可能来自不同批次）；CIDR 统一规范化（`1.2.3.4/24`→`1.2.3.0/24`，裸地址→`/32`），非法项（域名、`/999`、IPv6）丢弃并告警；下载体量上限 8MB 且必须是 JSON 对象。
+- **`metric set/primary` 修正**：`set_metric` 现在会删掉该网卡**全部**默认路由再重建；支持 `metric=None`（恢复不带 metric 的原始默认路由）；`metric primary <iface>` 在目标网卡不在 `config.interfaces` 时会按探测结果补齐，不再静默失效。
+- **`rule apply` 语义**：改为按配置声明**全量重建**（旧行为会先把其它规则清掉）；CLI/TUI 确认文案同步说明。
+- **CLI 健壮性**：`metric set` 缺数值时报参数错误（退出码 2）而非 `TypeError`；顶层兜底捕获未预期异常（人话提示 + 日志 traceback，退出码 1）。
+- **物理网卡识别**：优先用 sysfs `/sys/class/net/<if>/device` 判定，排除 VLAN 子接口（`enp2s0.100`）与 `dummy`/`wg`/`ppp`/`macvlan` 等虚拟前缀；同一网卡多条默认路由取 metric 最小者。
+- **日志可用性**：仓库 `logs/` 不可写（如被 root 创建）时自动回退到 `$XDG_STATE_HOME/netswitch/logs` 或临时目录并在 stderr 提示一次（旧实现静默不写日志）；启动行新增发起用户；`status` 打印当前日志路径。
+- **TUI 体验与开销**：长错误改用可折行的**错误弹层**（状态栏只有一行，旧实现直接截断）；执行前显示“执行中…”；每个刷新周期只探测一次网卡并把快照传给 `config.load`，`mainroute` 后端下主表只 dump 一次；配置非法时 TUI 仍可打开并显示原因。
+- **status 健壮性**：单条规则状态查询失败不再让整个 `status` 报错退出。
+
+### Changed（工程 / 测试 / 文档）
+- **CI 升级**：Python 3.9/3.11/3.13 矩阵上直接跑 `scripts/check.sh`（补上此前遗漏的版本一致性核对），并新增 shell 语法检查（`bash -n`）、`compileall` 与 `pyproject.toml` 解析。
+- **文档门禁自动化**：`check-docs.sh` 新增「`folder.md` 必须覆盖 src/scripts/data/config 与工程文件」与「改动了 `src/`/`scripts/` 就必须同步 `docs/changelog.md`」两项检查（AGENTS.md 的人工要求变成机器门禁）。
+- **新增 `pyproject.toml`**：包元数据、`netswitch`/`netswitch-tui` 入口点与 dev 依赖；版本仍以 `version.py` 为唯一来源。⚠️ 仅做了 TOML 解析与元数据校验（CI 与本次改动环境均未安装 setuptools，未实际构建/安装验证）；`install-systemd`、`data/config/*` 仍按“仓库内运行”假定，打包安装后的 systemd 集成不在支持范围。
+- **测试**：新增 netns 集成测试（`src/test/test_integration_netns.py`，用 `unshare -rn`，**无需 root**，环境不支持自动 skip）与 `test_status.py`；重写 `test_routing`/`test_config`/`test_apply`/`test_iface`/`test_ip`/`test_cidrs`/`test_cli`/`test_log`/`test_tui`。用例数 44 → **160**（含 3 个 netns 集成用例）。
+- **preflight.sh**：能力探测在“探测项已存在（并发预检）”时不再误报失败；文档明确该脚本会临时增删一条测试路由并立即删除。
+- **文档同步**：requirements/test-plan/technical/plan/review-findings/user-manuals/faq/folder/README 全量对齐本轮改动。
+
 ## [0.1] - 2026-09-23
 
 ### Added

@@ -7,14 +7,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.11', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
       - name: 安装依赖
         run: pip install pytest pytest-mock
-      - name: 运行测试
-        run: bash scripts/run-test.sh
-      - name: 核对文档
-        run: bash scripts/check-docs.sh
+      # 与本地提交门槛完全一致：测试 + 文档一致性 + 版本一致性
+      # （netns 集成测试在无 unshare 的环境会自动 skip）
+      - name: 提交门槛核对（scripts/check.sh）
+        run: bash scripts/check.sh
+      - name: shell 语法检查
+        run: |
+          for f in scripts/*.sh scripts/git-hooks/*; do
+            bash -n "$f" || exit 1
+          done
+      - name: Python 语法检查
+        run: python -m compileall -q src/python src/test
+      - name: pyproject.toml 可解析
+        if: matrix.python-version != '3.9'
+        run: |
+          python -c "import tomllib, pathlib; tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))"

@@ -139,7 +139,7 @@ cp data/config/config.example.json data/config/config.json
 | `rules[].cidrs.source` | `url`（从 URL 拉取）/ `manual`（仅用 extra） |
 | `rules[].cidrs.url` / `fields` | 从该 URL 返回 JSON 的哪些字段提取 CIDR |
 | `rules[].cidrs.ttl_hours` / `extra` | 缓存时长（默认 24）/ 手动补充网段 |
-| `rules[].table_id` / `fwmark` | 缺省自动分配且保证唯一 |
+| `rules[].table_id` / `fwmark` | 缺省自动分配且保证唯一；`table_id` 必须 200..252（避开内核保留表），`fwmark` 不能为 0 |
 | `state_file` | 原始状态记录位置（`revert` 依赖，默认 `data/config/state.json`） |
 
 ### 3.3 新增一条分流规则
@@ -157,9 +157,9 @@ cp data/config/config.example.json data/config/config.json
 | `status` | 查看状态（主机名、版本、程序更新时间、网卡/IP/状态/metric/规则） |
 | `detect [--write]` | 重新探测网卡；`--write` 写回 `interfaces` |
 | `iface up\|down <name> [--force]` | 开启 / 关闭网卡 |
-| `metric set <name> <n>` | 设置 metric（越小越优先） |
+| `metric set <name> <n>` | 设置 metric（越小越优先；`<n>` **必填**） |
 | `metric primary <name>` | 设为主网卡 |
-| `rule apply <rule> [--interface <iface>]` | 应用某条分流规则（可临时改出口） |
+| `rule apply <rule> [--interface <iface>]` | 按配置重建全部分流规则（声明式；`<rule>` 仅用于确认提示，可临时改出口） |
 | `rule clear <rule>` | 撤销某条分流规则（**写回配置**） |
 | `apply [--force]` | 按配置应用全部（metric + 规则） |
 | `revert` | 撤销全部改动（恢复原始默认路由） |
@@ -263,10 +263,11 @@ scripts/cli-netswitch.sh apply
 
 ### 6.1 运行日志
 
-- **文件**：`logs/netswitch.log`，按大小轮转（2MB × 5 个）。
-- **内容**：每条系统命令（`OK`/`FAIL`/`DRY-RUN`）、apply/revert、网卡开关、metric、策略路由、配置写回、CIDR 拉取、CLI/TUI 启动。
-- **级别/目录**：默认 INFO（只记写操作与高层动作）；`NETSWITCH_LOG_LEVEL=DEBUG` 可含只读查询；`NETSWITCH_LOG_DIR` 可改目录。
-- **查看**：`tail -f logs/netswitch.log`。
+- **文件**：默认 `logs/netswitch.log`，按大小轮转（2MB × 5 个）；`status` 会打印当前实际使用的日志路径。
+- **目录回退**：仓库内 `logs/` 若被 root 创建（`sudo` 跑过 install/apply），普通用户不可写，程序会**自动回退**到 `$XDG_STATE_HOME/netswitch/logs`（或临时目录）并在 stderr 提示一次，而不是静默丢日志。
+- **内容**：每条系统命令（`OK`/`FAIL`/`DRY-RUN`）、apply/revert、网卡开关、metric、策略路由、配置写回、CIDR 拉取、CLI/TUI 启动；启动行含版本、主机名与发起用户。
+- **级别/目录**：默认 INFO（只记写操作与高层动作）；`NETSWITCH_LOG_LEVEL=DEBUG` 可含只读查询；`NETSWITCH_LOG_DIR` 可显式指定目录。
+- **查看**：`tail -f logs/netswitch.log`（或 `status` 里显示的路径）。
 
 ### 6.2 分流不生效？
 
@@ -287,8 +288,10 @@ scripts/cli-netswitch.sh apply
 
 ## 8. 安全须知
 
-- 高危操作前**务必**先跑 `preflight.sh`。
+- 高危操作前**务必**先跑 `preflight.sh`（不改变持久配置；能力探测会临时增删一条测试路由并立即删除）。
 - 首次执行用 `--dry-run` 查看将执行的命令。
 - 仅有一张网卡生效（唯一承载默认路由）时，程序**禁止关闭**它（`--force` 可强制，慎用）。
-- 保持 `data/config/state.json` 不被误删（`revert` 依赖它）。
+- 保持 `data/config/state.json` 不被误删（`revert` 依赖它；但重复 apply 不会再把它覆盖成错值）。
 - 所有写操作默认要求确认：TUI 按 `y`；CLI 输入 `y`，脚本用 `-y` 跳过。
+- **清理只动自己的产物**：程序只删自己的 nft 表、主表中 `proto 200` 的明细路由、`pref 20000+` 且表号在派生区间的 `ip rule`；不会碰内核直连路由或你手写的静态路由。
+- **配置检查**：`backend` 拼错、`table_id` 落在 253/254/255（内核保留表）、`fwmark=0`、规则名非法/归一化后重名、`state_file`/`cache_file` 指向数据目录之外 —— 这些都会在启动时报错并拒绝执行。建议 `data/config/config.json` 设为 `root:root 0600`（它会被 `sudo`/systemd 以 root 读取，并影响写成哪些路径）。
