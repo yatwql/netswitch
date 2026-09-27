@@ -9,11 +9,15 @@ from .model import Config, IfaceCfg
 _log = log.get_logger()
 
 
+def _default_routes(iface: str) -> List[dict]:
+    """该网卡的所有默认路由（可能有多条：不同 metric / 不同来源）。"""
+    return [r for r in ip.route_list()
+            if r.get("dev") == iface and r.get("dst") == "default"]
+
+
 def _default_route(iface: str):
-    for r in ip.route_list():
-        if r.get("dev") == iface and r.get("dst") == "default":
-            return r
-    return None
+    routes = _default_routes(iface)
+    return routes[0] if routes else None
 
 
 def set_link(iface: str, up: bool, *, force: bool = False, dry_run: bool = False) -> None:
@@ -35,28 +39,50 @@ def set_link(iface: str, up: bool, *, force: bool = False, dry_run: bool = False
            dry_run=dry_run, check=True)
 
 
-def set_metric(iface: str, metric: int, gateway: Optional[str] = None, *,
+def set_metric(iface: str, metric: Optional[int], gateway: Optional[str] = None, *,
                dry_run: bool = False) -> None:
-    """重建默认路由以设置 metric。"""
-    rt = _default_route(iface)
-    gw = gateway or (rt.get("gateway") if rt else None)
+    """重建默认路由以设置 metric。
+
+    `metric=None` 表示恢复"不带 metric 的默认路由"（revert 恢复原始状态时用）。
+    先删掉该网卡**所有**已知默认路由再添加，避免残留重复默认路由。
+    """
+    routes = _default_routes(iface)
+    gw = gateway or (routes[0].get("gateway") if routes else None)
     if not gw:
         raise RuntimeError(
             f"无法确定 {iface} 的网关（网卡无默认路由且配置未指定 gateway）"
         )
     _log.info("set_metric: %s metric=%s gw=%s", iface, metric, gw)
-    # 先删后加（幂等）
-    ex.run(["ip", "route", "del", "default", "via", gw, "dev", iface],
-           dry_run=dry_run, check=False)
-    ex.run(["ip", "route", "add", "default", "via", gw, "dev", iface,
-            "metric", str(int(metric))], dry_run=dry_run, check=True)
+    for rt in routes:
+        cmd = ["ip", "route", "del", "default"]
+        if rt.get("gateway"):
+            cmd += ["via", rt["gateway"]]
+        cmd += ["dev", iface]
+        if rt.get("metric") is not None:
+            cmd += ["metric", str(int(rt["metric"]))]
+        ex.run(cmd, dry_run=dry_run, check=False)
+
+    add = ["ip", "route", "add", "default", "via", gw, "dev", iface]
+    if metric is not None:
+        add += ["metric", str(int(metric))]
+    ex.run(add, dry_run=dry_run, check=True)
 
 
 def set_primary(iface: str, config: Config, *, dry_run: bool = False) -> None:
     """把 iface 设为优先网卡，其余物理网卡设为 fallback。"""
     _log.info("set_primary: %s（preferred=%s fallback=%s）",
               iface, config.metrics.preferred, config.metrics.fallback)
-    for ic in config.interfaces:
+    targets = list(config.interfaces)
+    if not any(ic.name == iface for ic in targets):
+        # 目标网卡不在配置里（CLI/TUI 允许选任意探测到的网卡）：
+        # 用探测结果补齐，否则会把其它网卡全压成 fallback 而目标网卡毫无变化。
+        probe = next((i for i in detect.detect_interfaces() if i.name == iface), None)
+        if probe is None:
+            raise RuntimeError(f"未探测到网卡 {iface}，无法设为优先网卡")
+        _log.info("set_primary: %s 不在配置的 interfaces 中，按探测结果补齐", iface)
+        targets.append(IfaceCfg(name=iface, gateway=probe.gateway, type=probe.type))
+
+    for ic in targets:
         target = config.metrics.preferred if ic.name == iface else config.metrics.fallback
-        if ic.gateway:
+        if ic.gateway or ic.name == iface:
             set_metric(ic.name, target, ic.gateway, dry_run=dry_run)

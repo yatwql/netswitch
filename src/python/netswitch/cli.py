@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -82,6 +83,10 @@ def cmd_metric(args) -> int:
     ex.require_root()
     config = _load(args)
     if args.action == "set":
+        if args.value is None:
+            print("错误：metric set 需要指定数值，例如 `metric set enp2s0 200`",
+                  file=sys.stderr)
+            return 2
         if not _need_confirm(args, f"确认把 {args.name} 的 metric 改为 {args.value}?"):
             print("已取消", file=sys.stderr)
             return 1
@@ -112,10 +117,13 @@ def cmd_rule(args) -> int:
         target.interface = args.interface
 
     if args.action == "apply":
-        if not _need_confirm(args, f"确认应用规则 {target.name}?"):
+        if not _need_confirm(
+            args, f"确认重新应用配置（含规则 {target.name}）?"
+        ):
             print("已取消", file=sys.stderr)
             return 1
-        routing.apply_rules(config, only={target.name}, dry_run=args.dry_run)
+        # 声明式：始终按配置重建全部规则（整表重建），不会误伤其它规则
+        routing.apply_rules(config, dry_run=args.dry_run)
     else:  # clear
         if not _need_confirm(args, f"确认撤销规则 {target.name} 的分流?"):
             print("已取消", file=sys.stderr)
@@ -143,6 +151,23 @@ def cmd_revert(args) -> int:
     return 1 if errors else 0
 
 
+def _validate_unit(unit: str) -> None:
+    """校验渲染后的 ExecStart 能被 argparse 接受（避免生成"装得上、跑不起来"的单元）。"""
+    line = next((l for l in unit.splitlines() if l.startswith("ExecStart=")), "")
+    if not line:
+        raise RuntimeError("服务模板缺少 ExecStart")
+    argv = shlex.split(line.split("=", 1)[1])
+    if "-m" in argv:
+        argv = argv[argv.index("-m") + 2:]
+    try:
+        build_parser().parse_args(argv)
+    except SystemExit as exc:
+        raise RuntimeError(
+            f"systemd 单元命令行无法被 netswitch 解析：{line}\n"
+            f"（顶层 --config 必须放在子命令之前）"
+        ) from exc
+
+
 def cmd_install_systemd(args) -> int:
     ex.require_root()
     if not _need_confirm(args, "确认安装并启用 systemd 服务 netswitch.service?"):
@@ -152,6 +177,7 @@ def cmd_install_systemd(args) -> int:
     if not tmpl_path.exists():
         raise RuntimeError(f"缺少服务模板：{tmpl_path}")
     unit = tmpl_path.read_text(encoding="utf-8").replace("__REPO_ROOT__", str(REPO_ROOT))
+    _validate_unit(unit)
     path = Path("/etc/systemd/system/netswitch.service")
     path.write_text(unit, encoding="utf-8")
     ex.run(["systemctl", "daemon-reload"], check=True)
@@ -227,8 +253,17 @@ def main(argv=None) -> int:
     }
     try:
         return handlers[args.command](args)
+    except KeyboardInterrupt:
+        print("已中断", file=sys.stderr)
+        return 130
     except (ex.ExecError, PermissionError, RuntimeError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        # 兜底：任何未预期异常都给一句人话 + 完整 traceback 进日志，不甩给用户
+        log.get_logger().exception("cli: 未预期的错误")
+        print(f"错误：{type(exc).__name__}: {exc}（详见 logs/netswitch.log）",
+              file=sys.stderr)
         return 1
 
 
